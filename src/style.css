@@ -6,7 +6,9 @@
 .tree-node .count{flex:none;font-size:11px;color:#8a8e84}
 .tree-node.no-prose .name{color:#8a8e84;font-style:italic}
 .tree-node.open{background:#dce4d7;font-weight:600}
-.tree-node.drop{outline:2px dashed #8b9b83;outline-offset:-2px}
+.tree-node.drop-inside{outline:2px dashed #6f8a62;outline-offset:-2px}
+.tree-node.drop-before{box-shadow:inset 0 3px 0 #6f8a62}
+.tree-node.drop-after{box-shadow:inset 0 -3px 0 #6f8a62}
 
 /* Editor pane. --margin is the left margin that holds scene titles. */
 main{flex:1;overflow:auto;--margin:clamp(150px,22%,260px)}

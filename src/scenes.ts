@@ -9,7 +9,7 @@
 import {Annotation, EditorSelection, EditorState, StateEffect, StateField, Transaction, type ChangeSpec, type Extension, type Range, type Text, type TransactionSpec} from '@codemirror/state';
 import {Decoration, EditorView, RectangleMarker, WidgetType, drawSelection, keymap, layer, placeholder, type DecorationSet, type LayerMarker, type ViewUpdate} from '@codemirror/view';
 import {defaultKeymap, history, historyKeymap, isolateHistory} from '@codemirror/commands';
-import {type Project, node, parts, reference, wordCount} from './model';
+import {type Place, type Project, cutWithGap, node, parts, reference, separators, wordCount} from './model';
 
 // ---------------------------------------------------------------------------------------------
 // Boundary tokens, built from private-use characters that never occur in normal text:
@@ -622,12 +622,19 @@ export class SceneEditor {
     this.structural('merge', {changes: [{from: s.from, to: s.innerFrom}, {from: s.innerTo, to: s.to}]});
   }
 
-  /** Move a scene to the end of another scene in this document (null = the opened node). False if either isn't here. */
-  moveInto(id: string, target: string | null): boolean {
-    const s = this.scene(id), t = target === null ? null : this.scene(target);
-    if (!s || (target !== null && !t)) return false;
-    const at = t ? t.innerTo : this.view.state.doc.length;
-    const changes = [{from: s.from, to: s.to}, {from: at, insert: '\n\n' + this.view.state.sliceDoc(s.from, s.to)}].sort((a, b) => a.from - b.from);
+  /** Move a scene before or after another scene, or to the end of one (target null = the opened node, 'inside'
+   *  only). Returns false if either isn't in this document, so the caller can move it in the stored model instead. */
+  place(id: string, target: string | null, where: Place): boolean {
+    const state = this.view.state, s = this.scene(id), t = target === null ? null : this.scene(target);
+    if (!s || (target === null ? where !== 'inside' : !t)) return false;
+    const slice = (a: number, b: number) => state.sliceDoc(a, b);
+    const inner = (scene: Scene | null | undefined): [number, number] => scene ? [scene.innerFrom, scene.innerTo] : [0, state.doc.length];
+    const [start, end] = where === 'inside' ? inner(t) : inner(t!.parent === null ? null : this.scene(t!.parent));
+    const at = where === 'inside' ? end : where === 'before' ? t!.from : t!.to;
+    const [cutFrom, cutTo] = cutWithGap(slice, s.from, s.to, ...inner(s.parent === null ? null : this.scene(s.parent)));
+    if (at >= cutFrom && at <= cutTo) return true; // already there
+    const [lead, trail] = separators(slice, at, start, end);
+    const changes = [{from: cutFrom, to: cutTo}, {from: at, insert: lead + slice(s.from, s.to) + trail}].sort((a, b) => a.from - b.from);
     this.structural('move', {changes});
     return true;
   }

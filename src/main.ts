@@ -1,6 +1,6 @@
 import {invoke} from '@tauri-apps/api/core';
 import {open, save} from '@tauri-apps/plugin-dialog';
-import {type Project, newProject, node, children, compose, validate, move, subtree, wordTotals} from './model';
+import {type Place, type Project, newProject, node, children, compose, validate, place, subtree, wordTotals} from './model';
 import {SceneEditor, expand, serialize} from './scenes';
 import './style.css';
 
@@ -159,17 +159,27 @@ function renameScene(id: string) {
   input.onblur = () => finish(true, false);
 }
 
-/** Move a node to the end of another. Inside the open text this is an ordinary, undoable edit. */
-function moveNode(id: string, target: string) {
-  if (id === target || id === project.root) return;
+/** Move a node before or after another, or to the end of it. Within the open text this is an ordinary, undoable edit. */
+function moveNode(id: string, target: string, where: Place) {
+  if (id === target || id === project.root || (target === project.root && where !== 'inside')) return;
   syncFromEditor();
   if (subtree(project, id).includes(target)) { say('A scene can’t be moved inside itself.'); return; }
-  if (editor.moveInto(id, target === openId ? null : target)) return;
-  move(project, id, target);
+  if (editor.place(id, target === openId ? null : target, where)) return;
+  place(project, id, target, where);
   dirty();
   loadEditor();
-  say(`Moved “${titles.get(id) ?? 'Untitled'}”. (This move can’t be undone with Ctrl+Z.)`);
+  say(`Moved “${titles.get(id) ?? 'Untitled'}”. (Moves reaching outside the open text can’t be undone with Ctrl+Z.)`);
 }
+
+/** Which part of a tree row the pointer is over: top quarter = before, bottom quarter = after, otherwise inside. */
+function dropPlace(e: DragEvent, row: HTMLElement, id: string): Place | null {
+  if (!dragging || dragging.subtree.has(id)) return null;
+  if (id === project.root) return 'inside';
+  const r = row.getBoundingClientRect(), y = (e.clientY - r.top) / r.height;
+  return y < .25 ? 'before' : y > .75 ? 'after' : 'inside';
+}
+/** The node being dragged in the tree, and everything under it (which it can't be dropped onto). */
+let dragging: {id: string; subtree: Set<string>} | null = null;
 
 // ---- Chrome: toolbar, tree, status ----
 
@@ -196,21 +206,30 @@ function renderTree() {
   tree.replaceChildren(el('h2', 'Manuscript'));
   const branch = (id: string, depth: number) => {
     const n = node(project, id), t = totals.get(id);
-    const b = button('', () => openNode(id), id === project.root ? 'Open' : 'Open. Drag onto another node to move it to the end of that node.');
+    const b = button('', () => openNode(id), id === project.root ? 'Open' : 'Open. Drag to move: drop on the top or bottom edge of another node to place it before or after, or on the middle to put it inside.');
     b.className = 'tree-node' + (id === openId ? ' open' : '') + (t && t.own === 0 ? ' no-prose' : '');
     b.style.paddingLeft = `${8 + depth * 14}px`;
     b.append(el('span', n.title || 'Untitled', 'name'), el('span', t ? t.total.toLocaleString() : '', 'count'));
     if (id !== project.root) {
       b.draggable = true;
-      b.ondragstart = e => e.dataTransfer?.setData(DRAG, id);
+      b.ondragstart = e => { dragging = {id, subtree: new Set(subtree(project, id))}; e.dataTransfer?.setData(DRAG, id); };
+      b.ondragend = () => { dragging = null; };
     }
-    b.ondragover = e => { if (e.dataTransfer?.types.includes(DRAG)) { e.preventDefault(); b.classList.add('drop'); } };
-    b.ondragleave = () => b.classList.remove('drop');
-    b.ondrop = e => {
+    const clear = () => b.classList.remove('drop-before', 'drop-after', 'drop-inside');
+    b.ondragover = e => {
+      const where = dropPlace(e, b, id);
+      clear();
+      if (!where) return;
       e.preventDefault();
-      b.classList.remove('drop');
-      const src = e.dataTransfer?.getData(DRAG);
-      if (src) moveNode(src, id);
+      b.classList.add(`drop-${where}`);
+    };
+    b.ondragleave = clear;
+    b.ondrop = e => {
+      const where = dropPlace(e, b, id), src = dragging?.id;
+      clear();
+      if (!where || !src) return;
+      e.preventDefault();
+      moveNode(src, id, where);
     };
     tree.append(b);
     children(n).forEach(c => branch(c, depth + 1));
