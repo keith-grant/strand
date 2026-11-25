@@ -1,1 +1,40 @@
-:root{font:15px system-ui;color:#252925;background:#faf9f6}*{box-sizing:border-box}body{margin:0}#app{height:100vh;display:flex;flex-direction:column}header,footer{padding:12px 16px;background:#eeede8;border-bottom:1px solid #d7d6cf;display:flex;gap:8px;align-items:center}footer{font-size:12px;border-top:1px solid #d7d6cf;border-bottom:0}.layout{display:flex;flex:1;min-height:0}aside{width:260px;min-width:160px;max-width:50%;resize:horizontal;overflow:auto;background:#f0efe9;border-right:1px solid #d7d6cf;padding:12px}main{flex:1;overflow:auto;padding:30px max(24px,5vw)}h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:#62665d}button,select{font:inherit;border:1px solid #cccfc4;border-radius:4px;background:#fff;padding:6px 10px;cursor:pointer;color:inherit}button:hover{background:#e3e7dc}.tree-node{display:block;width:100%;text-align:left;border:0;background:transparent;margin:2px 0}.active{background:#dce4d7}.title{display:block;width:100%;font:600 25px system-ui;border:0;background:transparent;margin-bottom:20px}.node{display:flex;flex-direction:column;gap:6px}.node>button{align-self:flex-start;font-size:11px;color:#62665d}.child{border-left:3px solid #8b9b83;padding:10px 12px;background:#f1f3ed;margin:6px 0}.child-head{display:flex;gap:6px;margin-bottom:8px}.child-head button{font-size:12px}textarea{width:100%;resize:none;overflow:hidden;background:transparent;border:1px solid transparent;border-radius:4px;padding:8px;font:17px/1.65 Georgia,serif;color:inherit}textarea:focus{outline:none;border-color:#a4ae9b}
+:root{font:15px system-ui;color:#252925;background:#faf9f6}*{box-sizing:border-box}body{margin:0}#app{height:100vh;display:flex;flex-direction:column}header,footer{padding:12px 16px;background:#eeede8;border-bottom:1px solid #d7d6cf;display:flex;gap:8px;align-items:center}footer{font-size:12px;border-top:1px solid #d7d6cf;border-bottom:0;white-space:pre}.spacer{flex:1}.layout{display:flex;flex:1;min-height:0}aside{width:260px;min-width:160px;max-width:50%;resize:horizontal;overflow:auto;background:#f0efe9;border-right:1px solid #d7d6cf;padding:12px}h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:#62665d}button,select{font:inherit;border:1px solid #cccfc4;border-radius:4px;background:#fff;padding:6px 10px;cursor:pointer;color:inherit}button:hover{background:#e3e7dc}
+
+/* Book tree */
+.tree-node{display:flex;justify-content:space-between;gap:8px;width:100%;text-align:left;border:0;background:transparent;margin:1px 0;padding-block:5px;padding-right:6px}
+.tree-node .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tree-node .count{flex:none;font-size:11px;color:#8a8e84}
+.tree-node.no-prose .name{color:#8a8e84;font-style:italic}
+.tree-node.open{background:#dce4d7;font-weight:600}
+.tree-node.drop{outline:2px dashed #8b9b83;outline-offset:-2px}
+
+/* Editor pane. --margin is the left margin that holds scene titles. */
+main{flex:1;overflow:auto;--margin:clamp(150px,22%,260px)}
+.heading{padding:28px 40px 10px var(--margin)}
+.title{display:block;width:100%;font:600 25px system-ui;border:0;background:transparent;color:inherit;padding:0}
+.title:focus{outline:none}
+.rename{position:fixed;z-index:1000;font:13px system-ui;padding:3px 6px;border:1px solid #a4ae9b;border-radius:4px;background:#fff;box-shadow:0 2px 8px rgb(0 0 0 / .12)}
+
+/* Scene colours: each top-level scene gets a hue; its sub-scenes share it. */
+.h0{--hue:188}.h1{--hue:100}.h2{--hue:255}.h3{--hue:28}.h4{--hue:335}.h5{--hue:48}
+.cm-band{background:hsl(var(--hue) 60% 50% / .12)}
+.cm-band.active{background:hsl(var(--hue) 60% 50% / .2)}
+.cm-rail{background:hsl(var(--hue) 45% 45% / .55);border-radius:1px}
+.cm-boundary{display:inline-block;width:2px;height:1.15em;margin:0 1px;vertical-align:-.2em;border-radius:1px;background:hsl(var(--hue) 50% 45% / .5)}
+.cm-empty-scene{font-style:italic;color:#9a9d94;padding:0 3px;cursor:text}
+.cm-collapsed{display:inline-block;font:13px/1.7 system-ui;padding:0 9px;margin:0 2px;border-radius:10px;background:hsl(var(--hue) 55% 50% / .2);color:#3e433b;cursor:pointer;white-space:nowrap}
+.cm-collapsed:hover{background:hsl(var(--hue) 55% 50% / .3)}
+
+/* Scene titles in the margin */
+.cm-scene-label{display:flex;align-items:center;justify-content:flex-end;gap:2px;height:20px;font:12px/20px system-ui;color:#5b6056}
+.cm-scene-label::after{content:'';flex:none;width:3px;height:14px;margin-left:4px;border-radius:2px;background:hsl(var(--hue) 50% 45% / .7)}
+.cm-scene-label.nested{font-size:11px;color:#7a7e74}
+.cm-scene-label.active{color:#1f231f;font-weight:600}
+.cm-scene-label .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+.cm-scene-label .name:hover{text-decoration:underline}
+.cm-scene-label button{font:inherit;font-weight:400;font-size:11px;line-height:18px;border:0;border-radius:3px;background:transparent;padding:0 4px;color:inherit;cursor:pointer}
+.cm-scene-label .toggle{flex:none;opacity:.55}
+.cm-scene-label .toggle:hover{opacity:1}
+.cm-scene-label .menu{position:absolute;top:100%;right:7px;z-index:1;display:flex;flex-direction:column;align-items:stretch;padding:3px;background:#fff;border:1px solid #d7d6cf;border-radius:6px;box-shadow:0 2px 8px rgb(0 0 0 / .1);visibility:hidden;transition:visibility 0s .2s}
+.cm-scene-label .menu button{text-align:left;padding:2px 8px}
+.cm-scene-label:hover .menu{visibility:visible;transition-delay:.4s}
