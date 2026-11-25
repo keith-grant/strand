@@ -1,6 +1,6 @@
 # Strand
 
-A deliberately minimal desktop skeleton for hierarchical Markdown composition. Tauri 2, Rust, TypeScript (no UI framework), Vite and SQLite via bundled rusqlite.
+A deliberately minimal desktop skeleton for hierarchical Markdown composition. Tauri 2, Rust, TypeScript (no UI framework), CodeMirror 6, Vite and SQLite via bundled rusqlite.
 
 ## Windows development
 
@@ -13,17 +13,33 @@ Install Node.js (22 LTS), Rust stable via rustup (MSVC target), Visual Studio 20
 
 ## Structure
 
-- `src/model.ts`: narrative model, reference parsing, validation, composition and moving nodes.
-- `src/main.ts`: UI, basic segmented editor, file dialogs and debounced persistence.
-- `src/style.css`: two-pane layout.
+- `src/model.ts`: narrative model, reference parsing, validation, composition, moving nodes and word counts.
+- `src/scenes.ts`: the scene editor, plus the structural commands (new scene, split, merge, delete, move).
+- `src/main.ts`: toolbar, book tree, status bar, file dialogs and debounced persistence.
+- `src/style.css`: layout and scene styling.
 - `src-tauri/src/main.rs`: SQLite persistence and Markdown export through Tauri commands.
+
+## How the editor works
+
+Opening a node expands its prose and all its descendants into one continuous CodeMirror document. Each child scene sits between a hidden opening and closing marker: private-use characters carrying the scene's id. A marker can sit anywhere, so scene boundaries can fall partway through a line. The cursor steps over a marker in one keypress, so either side of a boundary is a separate cursor position, and text typed there belongs to that side's scene.
+
+A transaction filter stops ordinary typing, deleting, cutting, pasting and dropping from creating or removing markers. Only the explicit structural commands change the structure, and because those are ordinary document edits, undo covers them.
+
+The markers exist only in the editor. Saving and export convert the document back into each node's own prose, with children as `{{node:UUID}}` references, so the project file and the Markdown never contain them.
 
 ## Current functionality
 
-New/open/save/save as projects, SQLite transactions, rename, extract selected text into child nodes or insert empty children, nested expansion, inline editing, independent node editing, move to end of another node, delete subtree, word counts and Markdown export. Save once to enable autosaving. All references use stable UUIDs; the tree is derived from prose rather than separately persisted. Project files are SQLite databases.
+- New, open, save (Ctrl+S) and save as; projects are SQLite databases and autosave once saved.
+- One editor for any node. Scenes are shown as tinted bands, with titles in the margin, and can be collapsed to a one-line summary.
+- New scene from a selection, or an empty one at the cursor (Ctrl+Shift+E).
+- Split at the cursor (Ctrl+Shift+Enter).
+- Merge with previous, next or parent; merge the scenes a selection runs across (Ctrl+Shift+M). Merging needs scenes in the same parent with only blank space between them.
+- Rename, delete, open a scene on its own.
+- Undo and redo of typing and structural changes.
+- Book tree with word counts and a marker for nodes without prose; drag a node onto another to move it to the end of that node.
+- Status bar shows the total word count and the current scene's own and aggregate word counts.
+- Markdown export.
 
 ## Intentional limitations / development boundaries
 
-The editor is a set of textareas for contiguous prose segments, not a unified rich-text editing surface. Native undo is local to each textarea and lost when the editor rebuilds. Cross-node selections, structural undo, arbitrary-position drag/drop, raw interpolation typing, revision history and timeline features are not implemented. Reference syntax is reserved (`{{node:UUID}}`); do not type it manually in this prototype. Node moves append to the destination. Markdown is edited as source rather than rendered. The save-on-close behavior is basic (browser unload warning); production should use Tauri close interception and await persistence. File operations are intended for a trusted local single-user tool; restrict paths and validate the model on the backend before distributing. Save As replaces the contents of an existing Strand database if selected. No installer or application icons are supplied.
-
-The environment used to create this skeleton did not have the Rust toolchain or installed npm dependencies, so a native build has not been verified.
+Undo history resets when another node is opened, or when a tree move involves a node outside the open text; renames are not undoable. Spellcheck is the webview's own and doesn't reliably re-check edited words; the plan is checking through Windows' spell checker, with a custom right-click menu. Node moves append to the destination. Markdown is edited as source rather than rendered. Revision history, timeline and search are not implemented. Reference syntax is reserved (`{{node:UUID}}`); do not type it manually in this prototype. The save-on-close behavior is basic (browser unload warning); production should use Tauri close interception and await persistence. File operations are intended for a trusted local single-user tool; restrict paths and validate the model on the backend before distributing. Save As replaces the contents of an existing Strand database if selected. No installer or application icons are supplied.

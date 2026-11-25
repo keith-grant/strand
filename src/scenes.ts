@@ -62,6 +62,7 @@ export interface Scene {
   innerTo: number;   // start of the closing token
   to: number;        // end of the closing token
   depth: number;     // 1 = direct child of the opened node
+  parent: string | null; // null = the opened node
   hue: number;       // colour slot, shared with the scene's top-level ancestor
 }
 interface SceneState { scenes: readonly Scene[]; byId: ReadonlyMap<string, Scene> }
@@ -74,7 +75,7 @@ function scan(doc: Text): Scene[] {
     const pos = m.index!, len = m[0].length;
     if (m[1] === OPEN) {
       const parent = open[open.length - 1];
-      const scene = {id: m[2], from: pos, innerFrom: pos + len, innerTo: -1, to: -1, depth: open.length + 1, hue: parent ? parent.hue : topLevel++ % HUES};
+      const scene = {id: m[2], from: pos, innerFrom: pos + len, innerTo: -1, to: -1, depth: open.length + 1, parent: parent ? parent.id : null, hue: parent ? parent.hue : topLevel++ % HUES};
       scenes.push(scene);
       open.push(scene);
     } else if (open.length && open[open.length - 1].id === m[2]) {
@@ -143,6 +144,23 @@ function shownScenes(state: EditorState): Scene[] {
     if (s.from < hiddenUntil) continue;
     out.push(s);
     if (collapsed.has(s.id)) hiddenUntil = s.to;
+  }
+  return out;
+}
+
+/** Two scenes in the same parent touch when only blank space (or nothing) lies between them. */
+const touching = (state: EditorState, a: Scene, b: Scene) => state.sliceDoc(a.to, b.from).trim() === '';
+
+const siblingsOf = (state: EditorState, parent: string | null) => state.field(scenesField).scenes.filter(s => s.parent === parent);
+
+/** For each scene, whether it touches the scene before / after it in the same parent (so can merge with it). */
+function mergeableNeighbours(state: EditorState): Map<string, {previous: boolean; next: boolean}> {
+  const out = new Map<string, {previous: boolean; next: boolean}>(), lastInParent = new Map<string | null, Scene>();
+  for (const s of state.field(scenesField).scenes) {
+    const flags = {previous: false, next: false}, before = lastInParent.get(s.parent);
+    out.set(s.id, flags);
+    if (before && touching(state, before, s)) { flags.previous = true; out.get(before.id)!.next = true; }
+    lastInParent.set(s.parent, s);
   }
   return out;
 }
@@ -297,14 +315,16 @@ function bandMarkers(view: EditorView): LayerMarker[] {
 
 const LABEL_HEIGHT = 20;
 
+interface LabelFlags { collapsed: boolean; active: boolean; split: boolean; mergePrevious: boolean; mergeNext: boolean }
+
 class LabelMarker implements LayerMarker {
   constructor(readonly editor: SceneEditor, readonly scene: Scene, readonly title: string, readonly top: number,
-              readonly width: number, readonly collapsed: boolean, readonly active: boolean) {}
+              readonly width: number, readonly flags: LabelFlags) {}
 
   eq(other: LayerMarker) {
     const o = other as LabelMarker;
     return o.scene.id === this.scene.id && o.scene.hue === this.scene.hue && o.scene.depth === this.scene.depth && o.title === this.title
-      && o.top === this.top && o.width === this.width && o.collapsed === this.collapsed && o.active === this.active;
+      && o.top === this.top && o.width === this.width && (Object.keys(this.flags) as (keyof LabelFlags)[]).every(k => o.flags[k] === this.flags[k]);
   }
 
   draw() {
@@ -326,7 +346,10 @@ class LabelMarker implements LayerMarker {
     menu.append(
       action('Open', 'Open this scene on its own', () => editor.hooks.open(id)),
       action('Rename', 'Rename this scene (or double-click its title)', () => editor.hooks.rename(id)),
-      action('Merge into parent', 'Remove this scene’s boundary. Its text stays where it is.', () => editor.merge(id)),
+      action('Split here', 'Split this scene at the cursor (Ctrl+Shift+Enter)', () => editor.split(), 'split'),
+      action('Merge with previous', 'Join this scene onto the end of the scene before it, which keeps its title', () => editor.mergeWith(-1, id), 'merge-previous'),
+      action('Merge with next', 'Join the next scene onto the end of this one', () => editor.mergeWith(1, id), 'merge-next'),
+      action('Merge with parent', 'Remove this scene’s boundary. Its text stays where it is, as part of the scene around it.', () => editor.mergeIntoParent(id)),
       action('Delete', 'Delete this scene and its text (Ctrl+Z to undo)', () => editor.remove(id)),
     );
     const name = document.createElement('span');
@@ -347,20 +370,24 @@ class LabelMarker implements LayerMarker {
   }
 
   private apply(box: HTMLElement) {
-    box.className = `cm-scene-label h${this.scene.hue}${this.scene.depth > 1 ? ' nested' : ''}${this.active ? ' active' : ''}`;
+    const {collapsed, active, split, mergePrevious, mergeNext} = this.flags;
+    box.className = `cm-scene-label h${this.scene.hue}${this.scene.depth > 1 ? ' nested' : ''}${active ? ' active' : ''}`;
     Object.assign(box.style, {top: `${this.top}px`, left: '6px', width: `${this.width}px`});
-    const name = box.querySelector<HTMLElement>('.name')!, toggle = box.querySelector<HTMLElement>('.toggle')!;
-    name.textContent = this.title;
-    name.title = `${this.title}. Click to go to it, double-click to rename.`;
-    toggle.textContent = this.collapsed ? '▸' : '▾';
-    toggle.title = this.collapsed ? 'Expand' : 'Collapse';
+    const part = (cls: string) => box.querySelector<HTMLElement>(`.${cls}`)!;
+    part('name').textContent = this.title;
+    part('name').title = `${this.title}. Click to go to it, double-click to rename.`;
+    part('toggle').textContent = collapsed ? '▸' : '▾';
+    part('toggle').title = collapsed ? 'Expand' : 'Collapse';
+    part('split').hidden = !split;
+    part('merge-previous').hidden = !mergePrevious;
+    part('merge-next').hidden = !mergeNext;
   }
 }
 
 function labelMarkers(view: EditorView, editor: SceneEditor): LayerMarker[] {
   const {from: top, to: bottom} = view.viewport, edges = textEdges(view);
-  const collapsed = view.state.field(collapsedField), active = sceneAt(view.state, view.state.selection.main.head)?.id;
-  const width = Math.max(60, edges.left - 30), out: LayerMarker[] = [];
+  const collapsed = view.state.field(collapsedField), sel = view.state.selection.main, active = sceneAt(view.state, sel.head)?.id;
+  const neighbours = mergeableNeighbours(view.state), width = Math.max(60, edges.left - 30), out: LayerMarker[] = [];
   let floor = -Infinity;
   for (const s of shownScenes(view.state)) {
     if (s.from < top || s.from > bottom) continue;
@@ -369,7 +396,9 @@ function labelMarkers(view: EditorView, editor: SceneEditor): LayerMarker[] {
     if (!c) continue;
     const y = Math.max(floor, Math.round((c.top + c.bottom) / 2 - LABEL_HEIGHT / 2 - edges.baseTop)); // don't overlap the previous label
     floor = y + LABEL_HEIGHT;
-    out.push(new LabelMarker(editor, s, editor.title(s.id), y, width, isCollapsed, s.id === active));
+    const n = neighbours.get(s.id)!;
+    out.push(new LabelMarker(editor, s, editor.title(s.id), y, width,
+      {collapsed: isCollapsed, active: s.id === active, split: s.id === active && sel.empty, mergePrevious: n.previous, mergeNext: n.next}));
   }
   return out;
 }
@@ -409,8 +438,13 @@ export interface SceneHooks {
   selectionChanged(): void;
   open(id: string): void;
   rename(id: string): void;
-  extract(): void;
   message(text: string): void;
+}
+
+/** "Ending" → "Ending (2)", "Ending (2)" → "Ending (3)". */
+function nextTitle(title: string) {
+  const m = /^(.*) \((\d+)\)$/.exec(title);
+  return m ? `${m[1]} (${Number(m[2]) + 1})` : `${title} (2)`;
 }
 
 export class SceneEditor {
@@ -434,7 +468,12 @@ export class SceneEditor {
       drawSelection(),
       layer({above: false, class: 'cm-scene-bands', markers: bandMarkers, update: layerNeedsUpdate}),
       layer({above: true, class: 'cm-scene-labels', markers: view => labelMarkers(view, this), update: layerNeedsUpdate}),
-      keymap.of([{key: 'Mod-Shift-e', run: () => { hooks.extract(); return true; }}, ...defaultKeymap, ...historyKeymap]),
+      keymap.of([
+        {key: 'Mod-Shift-e', run: () => { this.newScene(); return true; }},
+        {key: 'Mod-Shift-Enter', run: () => { this.split(); return true; }},
+        {key: 'Mod-Shift-m', run: () => { this.mergeSelection(); return true; }},
+        ...defaultKeymap, ...historyKeymap,
+      ]),
       EditorView.lineWrapping,
       EditorView.contentAttributes.of({spellcheck: 'true', autocorrect: 'on', autocapitalize: 'sentences'}),
       EditorView.clipboardOutputFilter.of(stripMarkers),
@@ -464,21 +503,107 @@ export class SceneEditor {
     this.view.dispatch({...spec, annotations: [structural.of(kind), isolateHistory.of('full')], userEvent: `structure.${kind}`, scrollIntoView: true});
   }
 
-  /** Make the selection a new child scene where it stands; with no selection, insert an empty one. */
-  extract(title: string): {id: string} | {error: string} {
+  private fail(message: string) { this.hooks.message(message); this.view.focus(); }
+  /** Let the new scene's margin title get drawn, then ask for its name. */
+  private askName(id: string) { requestAnimationFrame(() => requestAnimationFrame(() => this.hooks.rename(id))); }
+
+  /** Which scene commands make sense for the current cursor or selection. */
+  available() {
+    const state = this.view.state, sel = state.selection.main, scene = sceneAt(state, sel.head);
+    const neighbours = scene && sel.empty ? mergeableNeighbours(state).get(scene.id) : undefined;
+    return {
+      newScene: typeof this.newSceneRange() !== 'string',
+      split: !!scene && sel.empty,
+      mergePrevious: !!neighbours?.previous,
+      mergeNext: !!neighbours?.next,
+      merge: !sel.empty && typeof this.selectionGroup() !== 'string',
+    };
+  }
+
+  /** The text New scene would wrap, or why it can't. */
+  private newSceneRange(): {from: number; to: number} | string {
     const state = this.view.state, {scenes} = state.field(scenesField);
     const {from, to} = tighten(scenes, state.selection.main.from, state.selection.main.to);
     for (const s of scenes) {
       const apart = s.to <= from || s.from >= to, around = s.innerFrom <= from && to <= s.innerTo, within = from <= s.from && s.to <= to;
-      if (!apart && !around && !within) return {error: 'The selection crosses a scene boundary. Select text inside one scene.'};
+      if (!apart && !around && !within) return 'The selection crosses a scene boundary. Select text inside one scene.';
     }
+    return {from, to};
+  }
+
+  /** Make the selection a new child scene where it stands; with no selection, insert an empty one. */
+  newScene() {
+    const range = this.newSceneRange();
+    if (typeof range === 'string') return this.fail(range);
     const id = crypto.randomUUID();
-    this.titles.set(id, title);
-    this.structural('extract', {
-      changes: [{from, insert: startToken(id)}, {from: to, insert: endToken(id)}],
-      selection: EditorSelection.cursor(from + startToken(id).length),
+    this.titles.set(id, 'New scene');
+    this.structural('new', {
+      changes: [{from: range.from, insert: startToken(id)}, {from: range.to, insert: endToken(id)}],
+      selection: EditorSelection.cursor(range.from + startToken(id).length),
     });
-    return {id};
+    this.askName(id);
+  }
+
+  /** Split the scene the cursor is in: everything after the cursor becomes a new scene straight after it. */
+  split() {
+    const state = this.view.state, sel = state.selection.main, s = sceneAt(state, sel.head);
+    if (!sel.empty) return this.fail('Split works at the cursor. Clear the selection first.');
+    if (!s) return this.fail('Put the cursor inside a scene to split it. (To split the node you have open, open its parent.)');
+    const id = crypto.randomUUID(), pos = sel.head, middle = endToken(s.id) + startToken(id);
+    this.titles.set(id, nextTitle(this.title(s.id)));
+    // The old closing token now closes the new scene; the cursor gets the old scene's closing token plus the new opening one.
+    const changes = pos === s.innerTo
+      ? [{from: s.innerTo, to: s.to, insert: middle + endToken(id)}]
+      : [{from: pos, insert: middle}, {from: s.innerTo, to: s.to, insert: endToken(id)}];
+    this.structural('split', {changes, selection: EditorSelection.cursor(pos + middle.length)});
+    this.askName(id);
+  }
+
+  /** Merge a scene (default: the one the cursor is in) with the touching scene before (-1) or after (1) it. */
+  mergeWith(direction: -1 | 1, id?: string) {
+    const state = this.view.state, s = id ? this.scene(id) : sceneAt(state, state.selection.main.head);
+    if (!s) return this.fail('Put the cursor inside a scene first.');
+    const siblings = siblingsOf(state, s.parent), other = siblings[siblings.indexOf(s) + direction];
+    const pair = other && (direction < 0 ? [other, s] : [s, other]);
+    if (!pair || !touching(state, pair[0], pair[1])) return this.fail(`There’s no scene directly ${direction < 0 ? 'before' : 'after'} this one to merge with.`);
+    this.mergeScenes(pair);
+  }
+
+  /** Merge every scene the selection runs across. */
+  mergeSelection() {
+    const group = this.selectionGroup();
+    if (typeof group === 'string') return this.fail(group);
+    this.mergeScenes(group);
+  }
+
+  /** The scenes a selection would merge: from the scene it starts in to the scene it ends in, which must
+   *  share a parent and all touch. Scenes nested inside them simply come along. */
+  private selectionGroup(): Scene[] | string {
+    const state = this.view.state, {from, to} = state.selection.main, {scenes} = state.field(scenesField);
+    let start: Scene | null = null, end: Scene | null = null;
+    for (const s of scenes) { // later matches are nested deeper, so the last match is the innermost
+      if (s.from <= from && from < s.to) start = s;
+      if (s.from < to && to <= s.to) end = s;
+    }
+    if (!start || !end || start === end) return 'To merge, select from inside one scene into another.';
+    if (start.parent !== end.parent) return 'To merge, the selection must start and end in scenes at the same level.';
+    const siblings = siblingsOf(state, start.parent), group = siblings.slice(siblings.indexOf(start), siblings.indexOf(end) + 1);
+    for (let i = 1; i < group.length; i++)
+      if (!touching(state, group[i - 1], group[i])) return 'Only touching scenes can be merged. There’s other text between these.';
+    return group;
+  }
+
+  /** Join touching sibling scenes into the first, which keeps its title. Blank space between them is kept. */
+  private mergeScenes(group: readonly Scene[]) {
+    const first = group[0], last = group[group.length - 1], changes: ChangeSpec[] = [];
+    for (let i = 0; i + 1 < group.length; i++)
+      changes.push({from: group[i].innerTo, to: group[i].to}, {from: group[i + 1].from, to: group[i + 1].innerFrom});
+    changes.push({from: last.innerTo, to: last.to, insert: endToken(first.id)});
+    const merged = group.slice(1).map(s => `“${this.title(s.id)}”`).join(', ');
+    for (const s of group.slice(1)) this.collapsed.delete(s.id);
+    this.structural('merge', {changes});
+    this.hooks.message(`Merged ${merged} into “${this.title(first.id)}”.`);
+    this.view.focus();
   }
 
   /** Delete a scene, its text and its sub-scenes. */
@@ -490,7 +615,7 @@ export class SceneEditor {
   }
 
   /** Remove a scene's boundary, leaving its text (and sub-scenes) in the parent. */
-  merge(id: string) {
+  mergeIntoParent(id: string) {
     const s = this.scene(id);
     if (!s) return;
     this.collapsed.delete(id);

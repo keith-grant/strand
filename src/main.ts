@@ -30,12 +30,24 @@ app.append(toolbar, layout, status);
 
 const editor = new SceneEditor(host, titles, {
   changed: structure => { dirty(); if (structure) syncNow(); else scheduleSync(); },
-  selectionChanged: () => updateStatus(),
+  selectionChanged: () => { updateStatus(); updateSceneButtons(); },
   open: id => openNode(id),
   rename: id => renameScene(id),
-  extract: () => extractScene(),
   message: text => say(text),
 });
+
+/** Scene commands on the toolbar. Only the ones that make sense for the current cursor or selection are shown. */
+const sceneButtons = {
+  newScene: button('New scene', () => editor.newScene(), 'Make the selected text a scene, or insert an empty scene at the cursor (Ctrl+Shift+E)'),
+  split: button('Split', () => editor.split(), 'Split this scene at the cursor (Ctrl+Shift+Enter)'),
+  mergePrevious: button('Merge with previous', () => editor.mergeWith(-1), 'Join this scene onto the end of the scene before it, which keeps its title'),
+  mergeNext: button('Merge with next', () => editor.mergeWith(1), 'Join the next scene onto the end of this one'),
+  merge: button('Merge', () => editor.mergeSelection(), 'Merge the scenes the selection runs across into the first of them (Ctrl+Shift+M)'),
+};
+function updateSceneButtons() {
+  const available = editor.available();
+  for (const [key, b] of Object.entries(sceneButtons)) b.hidden = !available[key as keyof typeof sceneButtons];
+}
 
 // ---- Keeping the stored project in step with the editor ----
 
@@ -88,6 +100,7 @@ function loadEditor() {
   totals = wordTotals(project);
   renderTree();
   updateStatus();
+  updateSceneButtons();
 }
 function reset(p: Project, dest: string | null) {
   validate(p);
@@ -144,13 +157,6 @@ function renameScene(id: string) {
     else if (e.key === 'Escape') finish(false, true);
   };
   input.onblur = () => finish(true, false);
-}
-
-function extractScene() {
-  const result = editor.extract('New scene');
-  if ('error' in result) { say(result.error); editor.focus(); return; }
-  // Let the editor draw the new scene's margin title, then put the rename box over it.
-  requestAnimationFrame(() => requestAnimationFrame(() => renameScene(result.id)));
 }
 
 /** Move a node to the end of another. Inside the open text this is an ordinary, undoable edit. */
@@ -237,7 +243,7 @@ toolbar.append(
     if (dest) await invoke('export_markdown', {path: dest, prose: compose(project)});
   }),
   el('span', '', 'spacer'),
-  button('New scene', extractScene, 'Make the selected text a scene (Ctrl+Shift+E). With nothing selected, inserts an empty scene at the cursor.'),
+  ...Object.values(sceneButtons),
 );
 
 window.addEventListener('keydown', e => {
