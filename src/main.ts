@@ -4,6 +4,7 @@ import {readText, writeText} from '@tauri-apps/plugin-clipboard-manager';
 import {type Place, type Project, newProject, node, children, compose, validate, place, subtree, wordTotals} from './model';
 import {SceneEditor, expand, serialize, stripMarkers} from './scenes';
 import {Spelling} from './spelling';
+import {Grammar, plainMessage, ruleName} from './grammar';
 import {type MenuItem, showMenu} from './menu';
 import './style.css';
 
@@ -41,6 +42,11 @@ const spelling = new Spelling({
   accepted: word => dictionary.has(word) || dictionary.has(word.toLowerCase()),
   report: text => say(text),
 });
+const grammar = new Grammar({
+  enabled: () => project.settings.grammar,
+  ruleOff: rule => project.settings.grammarOffRules.includes(rule),
+  report: text => say(text),
+});
 
 const editor = new SceneEditor(host, titles, {
   changed: structure => { dirty(); if (structure) syncNow(); else scheduleSync(); },
@@ -48,7 +54,37 @@ const editor = new SceneEditor(host, titles, {
   open: id => openNode(id),
   rename: id => renameScene(id),
   message: text => say(text),
-}, spelling.extension);
+}, [spelling.extension, grammar.extension]);
+
+/** Grammar switch for this book, plus a way to turn back on rules that were turned off. */
+const grammarSwitch = el('input'), rulesOff = button('', () => showRulesOff(), 'Grammar rules turned off for this book. Click to turn one back on.');
+grammarSwitch.type = 'checkbox';
+grammarSwitch.onchange = () => {
+  project.settings.grammar = grammarSwitch.checked;
+  dirty();
+  grammar.redraw(editor.view);
+  updateGrammarControls();
+};
+const grammarLabel = el('label', '', 'switch');
+grammarLabel.title = 'Check grammar in this book. Dialogue is never checked.';
+grammarLabel.append(grammarSwitch, ' Grammar');
+function updateGrammarControls() {
+  const off = project.settings.grammarOffRules.length;
+  grammarSwitch.checked = project.settings.grammar;
+  rulesOff.hidden = !off || !project.settings.grammar;
+  rulesOff.textContent = `${off} rule${off === 1 ? '' : 's'} off`;
+}
+function setRule(rule: string, on: boolean) {
+  const rules = project.settings.grammarOffRules;
+  if (on) rules.splice(rules.indexOf(rule), 1); else if (!rules.includes(rule)) rules.push(rule);
+  dirty();
+  grammar.redraw(editor.view);
+  updateGrammarControls();
+}
+function showRulesOff() {
+  const r = rulesOff.getBoundingClientRect();
+  showMenu(r.left, r.bottom + 2, project.settings.grammarOffRules.map(rule => ({label: `Turn “${ruleName(rule)}” back on`, run: () => setRule(rule, true)})), () => editor.focus());
+}
 
 /** Scene commands on the toolbar. Only the ones that make sense for the current cursor or selection are shown. */
 const sceneButtons = {
@@ -115,6 +151,7 @@ function loadEditor() {
   renderTree();
   updateStatus();
   updateSceneButtons();
+  updateGrammarControls();
 }
 function reset(p: Project, dest: string | null) {
   validate(p);
@@ -227,16 +264,31 @@ function openTextMenu(x: number, y: number, pos: number) {
     } else {
       items.push({
         placeholder: 'Looking for suggestions…',
-        load: spelling.suggestions(found.word).then(list => list.length
+        load: spelling.suggestions(found.text).then(list => list.length
           ? list.slice(0, 6).map(s => ({label: s, strong: true, run: () => replace(found.from, s)}))
           : [{label: 'No suggestions', disabled: true as const}]),
       });
     }
     if (found.issue.action !== 'delete') items.push(
-      {label: 'Add to dictionary', hint: 'Accept this word everywhere in this book', run: () => addToDictionary(found.word)},
-      {label: 'Ignore', hint: 'Accept this word until Strand is closed', run: () => spelling.ignore(found.word, view)},
+      {label: 'Add to dictionary', hint: 'Accept this word everywhere in this book', run: () => addToDictionary(found.text)},
+      {label: 'Ignore', hint: 'Accept this word until Strand is closed', run: () => spelling.ignore(found.text, view)},
     );
     items.push('separator');
+  }
+  const problem = grammar.issueAt(state, pos);
+  if (problem) {
+    const fix = (text: string) => view.dispatch({changes: {from: problem.from, to: problem.to, insert: text}, userEvent: 'input.grammar'});
+    items.push({note: plainMessage(problem.issue.message)});
+    for (const text of problem.issue.fixes.slice(0, 4))
+      items.push({label: text === '' ? `Remove “${problem.text}”` : text, strong: true, run: () => fix(text)});
+    items.push(
+      {label: 'Ignore', hint: 'Hide this one until Strand is closed', run: () => grammar.ignore(problem, view)},
+      {label: `Turn off “${ruleName(problem.issue.rule)}” for this book`, run: () => {
+        setRule(problem.issue.rule, false);
+        say(`Turned off “${ruleName(problem.issue.rule)}” for this book. “Rules off” on the toolbar turns it back on.`);
+      }},
+      'separator',
+    );
   }
   items.push(
     {label: 'Cut', disabled: sel.empty, run: () => copySelection(true)},
@@ -358,6 +410,8 @@ toolbar.append(
     const dest = await save({filters: [{name: 'Markdown', extensions: ['md']}]});
     if (dest) await invoke('export_markdown', {path: dest, prose: compose(project)});
   }),
+  grammarLabel,
+  rulesOff,
   el('span', '', 'spacer'),
   ...Object.values(sceneButtons),
 );

@@ -6,6 +6,7 @@ export type MenuItem =
   | {label: string; run: () => void; disabled?: boolean; hint?: string; strong?: boolean}
   | {label: string; disabled: true}
   | {load: Promise<MenuItem[]>; placeholder: string}
+  | {note: string}
   | 'separator';
 
 let current: {close(): void} | null = null;
@@ -21,6 +22,12 @@ export function showMenu(x: number, y: number, items: MenuItem[], onClose: () =>
       const hr = document.createElement('div');
       hr.className = 'separator';
       return [hr];
+    }
+    if ('note' in item) {
+      const note = document.createElement('div');
+      note.className = 'note';
+      note.textContent = item.note;
+      return [note];
     }
     if ('load' in item) {
       const slot = document.createElement('div');

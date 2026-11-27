@@ -22,6 +22,23 @@ const MARKERS = new RegExp(`[${OPEN}-${STOP}]`, 'g');
 const startToken = (id: string) => OPEN + id + STOP;
 const endToken = (id: string) => CLOSE + id + STOP;
 export const stripMarkers = (text: string) => text.replace(TOKEN, '').replace(MARKERS, '');
+/** Remove boundary tokens, with a way to map a position in the result back to a position in `text`. */
+export function withoutMarkers(text: string): {text: string; at: (pos: number) => number} {
+  if (!MARKER.test(text)) return {text, at: pos => pos};
+  const runs: {from: number; origin: number}[] = []; // where each kept stretch starts in the result, and in `text`
+  let out = '', last = 0;
+  const keep = (a: number, b: number) => { if (b > a) { runs.push({from: out.length, origin: a}); out += text.slice(a, b); } };
+  for (const m of text.matchAll(TOKEN)) { keep(last, m.index!); last = m.index! + m[0].length; }
+  keep(last, text.length);
+  return {
+    text: out,
+    at: pos => {
+      let run = runs[0];
+      for (const r of runs) { if (r.from > pos) break; run = r; }
+      return run ? run.origin + (pos - run.from) : pos;
+    },
+  };
+}
 /** Replace every boundary token with spaces of the same length, so positions in the result still match the text. */
 export const blankMarkers = (text: string) => MARKER.test(text) ? text.replace(TOKEN, m => ' '.repeat(m.length)).replace(MARKERS, ' ') : text;
 

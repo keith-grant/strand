@@ -30,6 +30,9 @@ main{flex:1;overflow:auto;--margin:clamp(150px,22%,260px)}
 /* Spelling */
 .cm-misspelt{text-decoration:underline wavy #d0453a;text-decoration-thickness:1px;text-underline-offset:3px;text-decoration-skip-ink:none}
 
+.cm-grammar{text-decoration:underline dotted #3b6fd4;text-decoration-thickness:2px;text-underline-offset:3px;text-decoration-skip-ink:none}
+.switch{display:flex;align-items:center;gap:5px;margin-left:8px;cursor:pointer;user-select:none}
+
 /* Right-click menu */
 .popup-menu{position:fixed;z-index:1000;min-width:190px;padding:4px;background:#fff;border:1px solid #d7d6cf;border-radius:6px;box-shadow:0 4px 16px rgb(0 0 0 / .14);font:13px system-ui;display:flex;flex-direction:column}
 .popup-menu button{border:0;border-radius:4px;background:transparent;text-align:left;padding:5px 10px;font:inherit}
@@ -37,6 +40,7 @@ main{flex:1;overflow:auto;--margin:clamp(150px,22%,260px)}
 .popup-menu button:disabled{color:#a3a69d;cursor:default}
 .popup-menu button.strong{font-weight:600}
 .popup-menu .pending{padding:5px 10px;color:#8a8e84;font-style:italic}
+.popup-menu .note{max-width:320px;padding:6px 10px 4px;color:#4c5148;font-size:12px;line-height:1.4}
 .popup-menu .separator{height:1px;margin:4px 6px;background:#e2e1da}
 
 /* Scene titles in the margin */
