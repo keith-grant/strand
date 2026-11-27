@@ -1,9 +1,10 @@
 export interface NarrativeNode { id: string; title: string; prose: string }
-export interface Project { root: string; nodes: NarrativeNode[] }
+/** `words`: the book's own spelling dictionary (names, invented words). */
+export interface Project { root: string; nodes: NarrativeNode[]; words: string[] }
 export const reference = (id: string) => `{{node:${id}}}`;
 export const parts = (prose: string) => prose.split(/(\{\{node:[a-zA-Z0-9-]+\}\})/g).map((text,i) => i%2 ? {kind:'child' as const,id:text.slice(7,-2)} : {kind:'text' as const,text});
 export function newNode(title='Untitled',prose=''): NarrativeNode { return {id:crypto.randomUUID(),title,prose}; }
-export function newProject(): Project { const root=newNode('Manuscript'); return {root:root.id,nodes:[root]}; }
+export function newProject(): Project { const root=newNode('Manuscript'); return {root:root.id,nodes:[root],words:[]}; }
 export function node(p:Project,id:string): NarrativeNode { const n=p.nodes.find(n=>n.id===id); if(!n) throw Error(`Missing node ${id}`); return n; }
 export function children(n:NarrativeNode):string[] { return parts(n.prose).flatMap(p=>p.kind==='child'?[p.id]:[]); }
 export function validate(p:Project) { const seen=new Set<string>(); function visit(id:string){ if(seen.has(id)) throw Error('Repeated node or cycle'); seen.add(id); children(node(p,id)).forEach(visit); } visit(p.root); if(seen.size!==p.nodes.length) throw Error('Unreachable or duplicate nodes'); }

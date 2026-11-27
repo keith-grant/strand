@@ -22,6 +22,8 @@ const MARKERS = new RegExp(`[${OPEN}-${STOP}]`, 'g');
 const startToken = (id: string) => OPEN + id + STOP;
 const endToken = (id: string) => CLOSE + id + STOP;
 export const stripMarkers = (text: string) => text.replace(TOKEN, '').replace(MARKERS, '');
+/** Replace every boundary token with spaces of the same length, so positions in the result still match the text. */
+export const blankMarkers = (text: string) => MARKER.test(text) ? text.replace(TOKEN, m => ' '.repeat(m.length)).replace(MARKERS, ' ') : text;
 
 /** Editor text for a node: its prose with every descendant expanded in place between boundary tokens. */
 export function expand(p: Project, id: string): string {
@@ -453,7 +455,7 @@ export class SceneEditor {
   private collapsed = new Set<string>();
 
   /** `titles` is shared with the app and outlives deletions, so undo can restore a scene with its name. */
-  constructor(parent: HTMLElement, private readonly titles: Map<string, string>, readonly hooks: SceneHooks) {
+  constructor(parent: HTMLElement, private readonly titles: Map<string, string>, readonly hooks: SceneHooks, extra: Extension = []) {
     const decorations = StateField.define<DecorationSet>({
       create: state => buildDecorations(state, this),
       update: (deco, tr) => tr.docChanged || tr.effects.length ? buildDecorations(tr.state, this) : deco,
@@ -475,7 +477,9 @@ export class SceneEditor {
         ...defaultKeymap, ...historyKeymap,
       ]),
       EditorView.lineWrapping,
-      EditorView.contentAttributes.of({spellcheck: 'true', autocorrect: 'on', autocapitalize: 'sentences'}),
+      // Spelling is checked by Strand itself (see spelling.ts), so the browser's own checker stays off.
+      EditorView.contentAttributes.of({spellcheck: 'false', autocapitalize: 'sentences'}),
+      extra,
       EditorView.clipboardOutputFilter.of(stripMarkers),
       EditorView.clipboardInputFilter.of(stripMarkers),
       placeholder('Write here…'),

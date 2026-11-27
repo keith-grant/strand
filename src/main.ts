@@ -1,8 +1,14 @@
 import {invoke} from '@tauri-apps/api/core';
 import {open, save} from '@tauri-apps/plugin-dialog';
+import {readText, writeText} from '@tauri-apps/plugin-clipboard-manager';
 import {type Place, type Project, newProject, node, children, compose, validate, place, subtree, wordTotals} from './model';
-import {SceneEditor, expand, serialize} from './scenes';
+import {SceneEditor, expand, serialize, stripMarkers} from './scenes';
+import {Spelling} from './spelling';
+import {type MenuItem, showMenu} from './menu';
 import './style.css';
+
+/** Spelling language. British English for now; could become a per-book setting. */
+const LANGUAGE = 'en-GB';
 
 let project = newProject(), openId = project.root, path: string | null = null;
 let revision = 0, savedRevision = 0, saveTimer: number | undefined, syncTimer: number | undefined, writes = Promise.resolve();
@@ -28,13 +34,21 @@ const layout = el('div', '', 'layout');
 layout.append(tree, main);
 app.append(toolbar, layout, status);
 
+/** The book's spelling dictionary, as a set for quick lookups. Kept in step with `project.words`. */
+let dictionary = new Set(project.words);
+const spelling = new Spelling({
+  language: LANGUAGE,
+  accepted: word => dictionary.has(word) || dictionary.has(word.toLowerCase()),
+  report: text => say(text),
+});
+
 const editor = new SceneEditor(host, titles, {
   changed: structure => { dirty(); if (structure) syncNow(); else scheduleSync(); },
   selectionChanged: () => { updateStatus(); updateSceneButtons(); },
   open: id => openNode(id),
   rename: id => renameScene(id),
   message: text => say(text),
-});
+}, spelling.extension);
 
 /** Scene commands on the toolbar. Only the ones that make sense for the current cursor or selection are shown. */
 const sceneButtons = {
@@ -105,6 +119,7 @@ function loadEditor() {
 function reset(p: Project, dest: string | null) {
   validate(p);
   project = p; path = dest; openId = p.root; revision = 0; savedRevision = 0;
+  dictionary = new Set(p.words);
   titles.clear();
   for (const n of p.nodes) titles.set(n.id, n.title);
   editor.clearCollapsed();
@@ -180,6 +195,88 @@ function dropPlace(e: DragEvent, row: HTMLElement, id: string): Place | null {
 }
 /** The node being dragged in the tree, and everything under it (which it can't be dropped onto). */
 let dragging: {id: string; subtree: Set<string>} | null = null;
+
+// ---- Right-click menu in the text: spelling, clipboard and scene commands ----
+
+editor.view.contentDOM.addEventListener('contextmenu', e => {
+  e.preventDefault();
+  const view = editor.view, sel = view.state.selection.main;
+  let x = e.clientX, y = e.clientY, pos = view.posAtCoords({x, y});
+  if (pos === null || (x === 0 && y === 0)) { // opened from the keyboard: use the cursor
+    pos = sel.head;
+    const c = view.coordsAtPos(pos);
+    if (c) { x = c.left; y = c.bottom; }
+  } else if (sel.empty || pos < sel.from || pos > sel.to) {
+    view.dispatch({selection: {anchor: pos}}); // right-clicking outside the selection moves the cursor there
+  }
+  openTextMenu(x, y, pos);
+});
+
+function openTextMenu(x: number, y: number, pos: number) {
+  const view = editor.view, state = view.state, sel = state.selection.main, items: MenuItem[] = [];
+  const found = spelling.issueAt(state, pos);
+  if (found) {
+    const replace = (from: number, text: string) => view.dispatch({changes: {from, to: found.to, insert: text}, userEvent: 'input.spelling'});
+    if (found.issue.action === 'delete') {
+      let from = found.from; // also remove the space before the repeated word
+      while (from > state.doc.lineAt(found.from).from && /[ \t]/.test(state.sliceDoc(from - 1, from))) from--;
+      items.push({label: 'Delete repeated word', strong: true, run: () => replace(from, '')});
+    } else if (found.issue.action === 'replace' && found.issue.replacement) {
+      const fix = found.issue.replacement;
+      items.push({label: fix, strong: true, run: () => replace(found.from, fix)});
+    } else {
+      items.push({
+        placeholder: 'Looking for suggestions…',
+        load: spelling.suggestions(found.word).then(list => list.length
+          ? list.slice(0, 6).map(s => ({label: s, strong: true, run: () => replace(found.from, s)}))
+          : [{label: 'No suggestions', disabled: true as const}]),
+      });
+    }
+    if (found.issue.action !== 'delete') items.push(
+      {label: 'Add to dictionary', hint: 'Accept this word everywhere in this book', run: () => addToDictionary(found.word)},
+      {label: 'Ignore', hint: 'Accept this word until Strand is closed', run: () => spelling.ignore(found.word, view)},
+    );
+    items.push('separator');
+  }
+  items.push(
+    {label: 'Cut', disabled: sel.empty, run: () => copySelection(true)},
+    {label: 'Copy', disabled: sel.empty, run: () => copySelection(false)},
+    {label: 'Paste', run: () => paste()},
+    'separator',
+  );
+  const can = editor.available(), scene = editor.activeScene();
+  if (can.newScene) items.push({label: 'New scene', hint: 'Ctrl+Shift+E', run: () => editor.newScene()});
+  if (can.split) items.push({label: 'Split scene here', hint: 'Ctrl+Shift+Enter', run: () => editor.split()});
+  if (can.merge) items.push({label: 'Merge selected scenes', hint: 'Ctrl+Shift+M', run: () => editor.mergeSelection()});
+  if (can.mergePrevious) items.push({label: 'Merge with previous', run: () => editor.mergeWith(-1)});
+  if (can.mergeNext) items.push({label: 'Merge with next', run: () => editor.mergeWith(1)});
+  if (scene && sel.empty) items.push({label: 'Merge with parent', run: () => editor.mergeIntoParent(scene.id)});
+  showMenu(x, y, items, () => editor.focus());
+}
+
+function addToDictionary(word: string) {
+  if (!dictionary.has(word)) {
+    dictionary.add(word);
+    project.words.push(word);
+    dirty();
+  }
+  spelling.redraw(editor.view);
+  say(`Added “${word}” to this book’s dictionary.`);
+}
+
+function copySelection(cut: boolean) {
+  const view = editor.view, {from, to} = view.state.selection.main;
+  if (from === to) return;
+  writeText(stripMarkers(view.state.sliceDoc(from, to)))
+    .then(() => { if (cut) view.dispatch({changes: {from, to}, userEvent: 'delete.cut'}); })
+    .catch(e => say('Couldn’t use the clipboard: ' + String(e)));
+}
+
+function paste() {
+  readText()
+    .then(text => { if (text) editor.view.dispatch({...editor.view.state.replaceSelection(text), userEvent: 'input.paste', scrollIntoView: true}); })
+    .catch(() => say('There’s no text on the clipboard to paste.'));
+}
 
 // ---- Chrome: toolbar, tree, status ----
 
