@@ -4,6 +4,7 @@
         "module": "ESNext",
         "moduleResolution": "Bundler",
         "strict": true,
+        "skipLibCheck": true,
         "lib": [
             "ESNext",
             "DOM",
@@ -12,6 +13,9 @@
         "noEmit": true
     },
     "include": [
-        "src"
+        "src",
+        "tests",
+        "playwright.config.ts",
+        "vite.config.ts"
     ]
 }

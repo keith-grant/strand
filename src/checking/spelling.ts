@@ -2,10 +2,10 @@
  * Spell checking: the operating system's spell checker on the Rust side (src-tauri/src/spelling.rs), with the
  * paragraph-by-paragraph checking and marking shared with grammar (checker.ts).
  */
-import {invoke} from '@tauri-apps/api/core';
 import type {EditorView} from '@codemirror/view';
+import {backend} from '../backend';
+import {blankMarkers} from '../editor/markers';
 import {ParagraphChecker, type Found} from './checker';
-import {blankMarkers} from './scenes';
 
 export interface SpellIssue {
   start: number;
@@ -31,7 +31,7 @@ export class Spelling extends ParagraphChecker<SpellIssue> {
 
   protected async check(paragraphs: string[]) {
     // Markers are blanked rather than removed, so positions in the results still match the editor text.
-    const result = await invoke<{language: string; issues: SpellIssue[][]}>('spell_check', {language: this.options.language, texts: paragraphs.map(blankMarkers)});
+    const result = await backend.spellCheck(this.options.language, paragraphs.map(blankMarkers));
     if (result.language !== this.options.language)
       this.report(`The spell checker for ${this.options.language} isn’t installed in Windows, so ${result.language} is being used.`);
     return result.issues;
@@ -42,7 +42,7 @@ export class Spelling extends ParagraphChecker<SpellIssue> {
   }
 
   async suggestions(word: string): Promise<string[]> {
-    return invoke<string[]>('spell_suggest', {language: this.options.language, word});
+    return backend.spellSuggest(this.options.language, word);
   }
 
   ignore(word: string, view: EditorView) {

@@ -12,5 +12,11 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
 harper-core = "3.2"
+
+# Harper (grammar) is far too slow unoptimised: ~7 s to start in a debug build. Optimise it even in development.
+[profile.dev.package.harper-core]
+opt-level = 2
+debug = false
+
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = ["Win32_Globalization", "Win32_System_Com"] }

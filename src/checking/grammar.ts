@@ -2,10 +2,10 @@
  * Grammar checking: Harper on the Rust side (src-tauri/src/grammar.rs), with the paragraph-by-paragraph checking and
  * marking shared with spelling (checker.ts). Dialogue is never marked: characters speak ungrammatically on purpose.
  */
-import {invoke} from '@tauri-apps/api/core';
 import type {EditorView} from '@codemirror/view';
+import {backend} from '../backend';
+import {withoutMarkers} from '../editor/markers';
 import {ParagraphChecker, type Found} from './checker';
-import {withoutMarkers} from './scenes';
 
 export interface GrammarIssue {
   start: number;
@@ -38,7 +38,7 @@ export class Grammar extends ParagraphChecker<GrammarIssue> {
   protected async check(paragraphs: string[]) {
     // Markers are removed rather than blanked, so they don't read as extra spaces; positions are mapped back.
     const prepared = paragraphs.map(withoutMarkers);
-    const results = await invoke<GrammarIssue[][]>('grammar_check', {texts: prepared.map(p => p.text)});
+    const results = await backend.grammarCheck(prepared.map(p => p.text));
     return results.map((issues, i) => issues.map(issue => {
       const start = prepared[i].at(issue.start), end = prepared[i].at(issue.start + issue.length);
       return {...issue, start, length: end - start};
@@ -76,7 +76,8 @@ export function ruleName(rule: string) {
 /** Harper's messages use a little Markdown; show them as plain text. */
 export const plainMessage = (message: string) => message.replace(/\*\*|`/g, '');
 
-function sentenceAround(text: string, at: number): [number, number] {
+/** The sentence around position `at` in a paragraph, as [start, end). */
+export function sentenceAround(text: string, at: number): [number, number] {
   let s = at, e = at;
   while (s > 0 && !/[.!?]/.test(text[s - 1])) s--;
   while (e < text.length && !/[.!?]/.test(text[e])) e++;

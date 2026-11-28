@@ -3,7 +3,7 @@
 
 use harper_core::linting::{LintGroup, LintKind, Suggestion};
 use harper_core::spell::FstDictionary;
-use harper_core::{remove_overlaps_map, Dialect, Document};
+use harper_core::{Dialect, Document};
 use serde::Serialize;
 use std::sync::mpsc::{channel, Receiver, Sender};
 
@@ -81,10 +81,11 @@ fn check(linter: &mut LintGroup, dictionary: &FstDictionary, text: &str) -> Vec<
     }
     utf16.push(at);
 
-    let mut lints = linter.organized_lints(&document);
-    remove_overlaps_map(&mut lints);
+    // Every remaining finding is kept, overlapping or not. (Harper's remove_overlaps would let one finding hide
+    // others under it, e.g. a "this sentence is long" note hiding a typo inside the sentence, even though that note
+    // is then discarded as style.)
     let mut out = Vec::new();
-    for (rule, lints) in lints {
+    for (rule, lints) in linter.organized_lints(&document) {
         for lint in lints.into_iter().filter(|l| wanted(l.lint_kind)) {
             let (start, end) = (lint.span.start.min(source.len()), lint.span.end.min(source.len()));
             let original: String = source[start..end].iter().collect();
@@ -139,9 +140,119 @@ mod tests {
     }
 
     #[test]
+    fn problems_inside_a_long_sentence_are_kept() {
+        // Harper also notes that this sentence is long (a style note, which Strand discards). That note must not
+        // hide the problems inside the sentence.
+        let text = "I watched out of the window for the rest of the day,But she was my friend and so, with all the \
+                    confidence of youth teh (I was a whole eleven years old after all), I sneaked out of the back door \
+                    and made my way through the gardens to her house.";
+        let issues = lint(text);
+        assert!(issues.iter().any(|i| marked(text, i) == "teh"), "“teh” should be flagged");
+        assert!(issues.iter().any(|i| i.rule == "CommaFixes"), "the missing space after the comma should be flagged");
+        assert!(issues.iter().all(|i| i.kind != "Readability"));
+    }
+
+    #[test]
     fn no_spelling_or_style() {
         let issues = lint("Teh qwertyuiop was really very basic fundamentals.");
         assert!(issues.iter().all(|i| i.rule != "SpellCheck" && i.kind != "Spelling" && i.kind != "Style"));
+    }
+
+    /// The book's text as the editor shows it with the root open, without scene markers (what grammar receives).
+    fn compose(project: &crate::project_file::Project, id: &str) -> String {
+        let prose = &project.nodes.iter().find(|n| n.id == id).expect("node").prose;
+        let (mut out, mut rest) = (String::new(), prose.as_str());
+        while let Some(start) = rest.find("{{node:") {
+            out.push_str(&rest[..start]);
+            let end = rest[start..].find("}}").expect("closing braces") + start;
+            out.push_str(&compose(project, &rest[start + 7..end]));
+            rest = &rest[end + 2..];
+        }
+        out + rest
+    }
+
+    #[test]
+    #[ignore] // diagnostic: STRAND_FILE=path cargo test real_book -- --ignored --nocapture
+    fn real_book() {
+        let path = std::env::var("STRAND_FILE").expect("set STRAND_FILE");
+        let project = crate::project_file::load(std::path::Path::new(&path)).unwrap();
+        let text = compose(&project, &project.root);
+        let dictionary = FstDictionary::curated();
+        let mut linter = new_linter(&dictionary);
+        for (n, line) in text.split('\n').enumerate().filter(|(_, l)| l.contains("teh")) {
+            println!("=== paragraph {n} ({} chars)\n{line}", line.chars().count());
+            for i in check(&mut linter, &dictionary, line) {
+                println!("    {:?} at {} [{}] {}: {} → {:?}", marked(line, &i), i.start, i.kind, i.rule, i.message, i.fixes);
+            }
+            println!("  raw, before any filtering:");
+            let document = Document::new_markdown_default(line, &dictionary);
+            for (rule, lints) in linter.organized_lints(&document) {
+                for l in lints {
+                    println!("    {rule} [{}] chars {}..{} priority {}: {}", l.lint_kind, l.span.start, l.span.end, l.priority, l.message);
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore] // diagnostic: STRAND_FILE=path cargo test overlaps_in_book -- --ignored --nocapture
+    fn overlaps_in_book() {
+        let path = std::env::var("STRAND_FILE").expect("set STRAND_FILE");
+        let project = crate::project_file::load(std::path::Path::new(&path)).unwrap();
+        let text = compose(&project, &project.root);
+        let dictionary = FstDictionary::curated();
+        let mut linter = new_linter(&dictionary);
+        let (mut paragraphs, mut findings, mut overlapping) = (0, 0, 0);
+        for line in text.split('\n').filter(|l| !l.trim().is_empty()) {
+            paragraphs += 1;
+            let issues = check(&mut linter, &dictionary, line);
+            findings += issues.len();
+            for (a, x) in issues.iter().enumerate() {
+                for y in &issues[a + 1..] {
+                    if x.start < y.start + y.length && y.start < x.start + x.length {
+                        overlapping += 1;
+                        println!("overlap: {:?} ({}) and {:?} ({})", marked(line, x), x.rule, marked(line, y), y.rule);
+                    }
+                }
+            }
+        }
+        println!("{paragraphs} paragraphs, {findings} findings shown, {overlapping} overlapping pairs");
+    }
+
+    #[test]
+    #[ignore] // timing only: cargo test timing -- --ignored --nocapture
+    fn timing() {
+        let start = std::time::Instant::now();
+        let dictionary = FstDictionary::curated();
+        let mut linter = new_linter(&dictionary);
+        println!("linter ready: {:?}", start.elapsed());
+        let paragraph = "We were setting off on our bikes to explore the woods like we did most weekends and Anna came running out her house and asked to join us. As I said, we'd seen her around so we said sure and off we went. She have a apple.";
+        let start = std::time::Instant::now();
+        for i in 0..40 {
+            check(&mut linter, &dictionary, &format!("{paragraph} {i}"));
+        }
+        println!("40 paragraphs: {:?}", start.elapsed());
+        for text in [
+            "She have two dogs.", "He took a apple.", "Their going to the shop.", "I could of done it.",
+            "Its a nice day.", "He don't know.", "She walked to to the shop.", "i went home.", "We was late.",
+            "But she was my friend and so, with the confidence of youth teh (I was a whole 11 years old after all)",
+            "with the confidence of youth teh.", "youth teh and", "teh (",
+            "Teh cat sat on the mat.", "The cat sat on teh mat.", "I saw teh dog.", "teh", "Teh", "We went to teh shop and bought teh milk.",
+            "Me and him went out.", "Your welcome.", "He should have went.", "Who's coat is this?", "It was a historical moment",
+            "A girl lives in the house at the end of our street.",
+            "No one else ever seems to come in or out, and no-one seems to talk about it.",
+            "I must have thought she was older than us because I remember seeing her around maybe playing with the older kids, but when you're 10 there are only really three ages; your age, old and babies.",
+            "But she was my friend and so with the confidence of youth (I was a whole 11 years old after all), I sneaked out the back and made my way through the neighbours' gardens to her house. I peered through the kitchen window and there she was sitting at her Kitchen table talking to some police officers. I remember thinking it was odd that there were only 2, given how many cars were outside. The police officers seemed agitated and kept pointing at a half open door in the corner and asking her questions. She had that look of exasperation  she always got when explaining something she thought was obvious and I could just hear her insisting that they shouldn't go downstairs.",
+            "The next day all the cars were gone, and no-one ever spoke about it again.",
+            "“Hello,” she said — and then… nothing. ‘Quiet,’ he whispered; “don’t.”",
+            "# Chapter One", "*Emphasis* and **bold** and `code`.", "", "   ", "—", "…", "\"", "''", "1.", "- list item", "> quote",
+            "Ünïcödé 😀 text with émigrés and naïve café façades.",
+        ] {
+            println!("--- {text}");
+            for i in check(&mut linter, &dictionary, text) {
+                println!("    [{}] {}: {} → {:?}", i.kind, i.rule, i.message, i.fixes);
+            }
+        }
     }
 
     #[test]

@@ -181,6 +181,34 @@ mod imp {
     }
 }
 
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    fn marked(text: &str, issue: &Issue) -> String {
+        let utf16: Vec<u16> = text.encode_utf16().collect();
+        String::from_utf16_lossy(&utf16[issue.start as usize..(issue.start + issue.length) as usize])
+    }
+
+    #[test]
+    fn finds_misspellings_with_utf16_offsets() {
+        let speller = Speller::start();
+        let texts = vec!["“Quoted” émigrés sat on teh mat.".to_string(), "All fine here.".to_string(), String::new()];
+        let checked = tauri::async_runtime::block_on(speller.check("en-GB".into(), texts.clone())).unwrap();
+        assert_eq!(checked.issues.len(), 3);
+        let words: Vec<String> = checked.issues[0].iter().map(|i| marked(&texts[0], i)).collect();
+        assert_eq!(words, vec!["teh"]);
+        assert!(checked.issues[1].is_empty() && checked.issues[2].is_empty());
+    }
+
+    #[test]
+    fn suggests_corrections() {
+        let speller = Speller::start();
+        let suggestions = tauri::async_runtime::block_on(speller.suggest("en-GB".into(), "recieve".into())).unwrap();
+        assert!(suggestions.iter().any(|s| s == "receive"), "got {suggestions:?}");
+    }
+}
+
 #[cfg(not(windows))]
 mod imp {
     use super::{Checked, Receiver, Request};

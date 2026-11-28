@@ -1,51 +1,85 @@
 # Strand
 
-A deliberately minimal desktop skeleton for hierarchical Markdown composition. Tauri 2, Rust, TypeScript (no UI framework), CodeMirror 6, Vite and SQLite via bundled rusqlite.
+A desktop writing tool for fiction, built around scenes that nest inside each other. Tauri 2 (Rust), TypeScript, CodeMirror 6, SQLite.
 
-## Windows development
+## Setup (Windows)
 
-Install Node.js (22 LTS), Rust stable via rustup (MSVC target), Visual Studio 2022 Build Tools with Desktop development with C++, and WebView2 Runtime. From this directory:
+Needs: Node.js 22.12+, Rust (MSVC), Visual Studio 2022 Build Tools (C++ workload), WebView2 Runtime, Microsoft Edge (for acceptance tests).
 
     npm install
     npm run tauri dev
 
-`npm run build` checks TypeScript and builds the frontend. `npm run tauri build` builds the desktop executable (installer bundling is disabled for this skeleton).
+The first build takes a few minutes (Harper, the grammar checker, is compiled optimised).
 
-## Structure
+## Running and building
 
-- `src/model.ts`: narrative model, reference parsing, validation, composition, moving nodes and word counts.
-- `src/scenes.ts`: the scene editor, plus the structural commands (new scene, split, merge, delete, move).
-- `src/main.ts`: toolbar, book tree, status bar, file dialogs and debounced persistence.
-- `src/style.css`: layout and scene styling.
-- `src-tauri/src/main.rs`: SQLite persistence and Markdown export through Tauri commands.
+| Command | Does |
+|---|---|
+| `npm run tauri dev` | Run the app |
+| `npm run tauri build` | Build the desktop executable |
+| `npm run build` | Type-check and build the frontend only |
+
+## Tests
+
+| Tests | What they check | Command |
+|---|---|---|
+| Unit | The TypeScript logic: model, editor markers and structural commands, edit guard, saving and autosave. Fast; no browser. | `npm run test:unit` |
+| Acceptance | The scenarios in `features/`, run through the real UI in headless Edge, with the Rust side faked. | `npm run test:acceptance` |
+| Rust | Project file saving and loading, Windows spell checker, Harper grammar. | `npm run test:rust` |
+| All | All three, in that order. | `npm test` |
+
+Coverage report for the unit tests: `npm run test:unit -- --coverage`.
+
+## Code layout
+
+| Where | What |
+|---|---|
+| `src/app.ts` | Builds the screen and connects everything |
+| `src/session.ts` | The open book: syncing with the editor, autosave, dictionary, settings |
+| `src/model.ts` | The stored model: nodes, references, word counts, moving nodes |
+| `src/backend.ts` | All calls to the Rust side, file dialogs and clipboard |
+| `src/editor/` | The scene editor: markers, scene state, edit guard, structural commands, drawing |
+| `src/checking/` | Spelling and grammar |
+| `src/ui/` | Tree, status bar, menus, rename box |
+| `src-tauri/src/` | Commands, project file, Windows spell checker, Harper grammar |
+| `features/` | Gherkin scenarios |
+| `tests/acceptance/` | Step definitions for the scenarios |
 
 ## How the editor works
 
-Opening a node expands its prose and all its descendants into one continuous CodeMirror document. Each child scene sits between a hidden opening and closing marker: private-use characters carrying the scene's id. A marker can sit anywhere, so scene boundaries can fall partway through a line. The cursor steps over a marker in one keypress, so either side of a boundary is a separate cursor position, and text typed there belongs to that side's scene.
+- Opening a node shows it and all its descendants as one continuous text.
+- Each scene sits between two hidden markers. Markers can fall mid-line, and the cursor steps over each one in a single keypress.
+- Ordinary edits can't add or remove markers. Only the structural commands can, so undo covers them.
+- Markers exist only in the editor. The project file stores `{{node:id}}` references instead.
 
-A transaction filter stops ordinary typing, deleting, cutting, pasting and dropping from creating or removing markers. Only the explicit structural commands change the structure, and because those are ordinary document edits, undo covers them.
+## Features
 
-The markers exist only in the editor. Saving and export convert the document back into each node's own prose, with children as `{{node:UUID}}` references, so the project file and the Markdown never contain them.
+- One editor for any node; scenes shown as coloured bands with titles in the margin; collapsible.
+- New scene (Ctrl+Shift+E), split (Ctrl+Shift+Enter), merge with previous / next / parent, merge a selection (Ctrl+Shift+M), rename, delete.
+- Undo and redo, including structural changes.
+- Book tree with word counts; drag to reorder or reparent.
+- Spelling (Windows' spell checker, British English) and grammar (Harper, offline). Dialogue is never grammar-checked; grammar can be switched off per book.
+- Right-click menu: suggestions, add to dictionary, ignore, cut/copy/paste, scene commands.
+- Autosave once saved; Markdown export.
 
-## Current functionality
+## Project file
 
-- New, open, save (Ctrl+S) and save as; projects are SQLite databases and autosave once saved.
-- One editor for any node. Scenes are shown as tinted bands, with titles in the margin, and can be collapsed to a one-line summary.
-- New scene from a selection, or an empty one at the cursor (Ctrl+Shift+E).
-- Split at the cursor (Ctrl+Shift+Enter).
-- Merge with previous, next or parent; merge the scenes a selection runs across (Ctrl+Shift+M). Merging needs scenes in the same parent with only blank space between them.
-- Rename, delete, open a scene on its own.
-- Undo and redo of typing and structural changes.
-- Book tree with word counts and a marker for nodes without prose. Drag a node onto the top or bottom edge of another to place it before or after it, or onto the middle to put it inside, at the end.
-- Status bar shows the total word count and the current scene's own and aggregate word counts.
-- Markdown export.
-- Spell checking through Windows' own spell checker (`src-tauri/src/spelling.rs`, `src/spelling.ts`), in British English, falling back to US English if that isn't installed. Each paragraph is checked once in its current form; what's on screen is checked straight away and the rest as it scrolls into view. The word being typed isn't underlined until the cursor leaves it.
-- Grammar checking with Harper, offline and in British English (`src-tauri/src/grammar.rs`, `src/grammar.ts`). Covers grammar, punctuation, missing and repeated words; spelling (left to Windows) and style suggestions are off. Dialogue inside quotation marks is never marked, and marks in the sentence being typed wait until the cursor leaves it. Grammar can be switched off per book from the toolbar (useful for first-person narration).
-- Spelling and grammar share the paragraph-by-paragraph checking and caching in `src/checker.ts`.
-- Right-click menu in the text (`src/menu.ts`): spelling suggestions, Add to dictionary (stored in the project file, so it applies to this book only), Ignore (until Strand closes); grammar explanations and fixes, Ignore, and turning a rule off for this book; Cut/Copy/Paste; the scene commands. Rules turned off are listed under "rules off" on the toolbar, where each can be turned back on.
+A SQLite database (`.strand`) holding nodes, the book's dictionary and settings. Its format version is in SQLite's `user_version` (currently 2). Older files open fine and upgrade on save; newer ones are refused.
 
-The project file records its format version in SQLite's `user_version`: 0 for files from before it was recorded, 1 adds the `dictionary` table, 2 adds the `settings` table (one JSON value per key). Older files open as normal and are upgraded on their next save; Strand refuses files from a newer version.
+## Testing notes
 
-## Intentional limitations / development boundaries
+- Unit tests sit next to the code they test (`*.test.ts`).
+- Acceptance scenarios tagged `@todo` are skipped. After a failure, see `playwright-report/`.
+- Test-mode code (`src/testing/`) isn't included in real builds.
+- Rust diagnostics, not run by default: `timing`, `real_book`, `overlaps_in_book`. The last two need `STRAND_FILE` set to a `.strand` file.
 
-Undo history resets when another node is opened, or when a tree move involves a node outside the open text; renames are not undoable. Spelling works on Windows only for now (other platforms get no underlines), the language isn't yet a per-book setting, and there is no way yet to review or remove dictionary words. Grammar is English only; Ignore lasts until Strand closes. Dialogue is found by its quotation marks, so an apostrophe at the start of a word (e.g. 'cause) can be mistaken for an opening quote. Moving a node inside another always puts it at the end; placing it at a chosen point within the text isn't implemented. Markdown is edited as source rather than rendered. Revision history, timeline and search are not implemented. Reference syntax is reserved (`{{node:UUID}}`); do not type it manually in this prototype. The save-on-close behavior is basic (browser unload warning); production should use Tauri close interception and await persistence. File operations are intended for a trusted local single-user tool; restrict paths and validate the model on the backend before distributing. Save As replaces the contents of an existing Strand database if selected. No installer or application icons are supplied.
+## Known limitations
+
+- Undo resets when you open another node, or move a node outside the open text. Renames can't be undone.
+- Spelling is Windows only; there's no way to review or remove dictionary words yet.
+- Grammar is English only; Ignore lasts until Strand closes.
+- An apostrophe starting a word (`'cause`) can be mistaken for the start of dialogue.
+- Moving a node inside another always puts it at the end.
+- Not built yet: versions, chronology and timeline, search, reference material, metadata.
+- Closing the window may lose the last second of typing; never-saved projects aren't autosaved.
+- Don't type `{{node:...}}` by hand.

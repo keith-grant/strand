@@ -2,6 +2,10 @@
 node_modules/
 dist/
 coverage/
+# Test output: Playwright results and report, and the tests playwright-bdd generates from features/
+test-results/
+playwright-report/
+.features-gen/
 *.tsbuildinfo
 
 # Rust / Tauri build output

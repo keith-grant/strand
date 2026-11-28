@@ -30,7 +30,8 @@ main{flex:1;overflow:auto;--margin:clamp(150px,22%,260px)}
 /* Spelling */
 .cm-misspelt{text-decoration:underline wavy #d0453a;text-decoration-thickness:1px;text-underline-offset:3px;text-decoration-skip-ink:none}
 
-.cm-grammar{text-decoration:underline dotted #3b6fd4;text-decoration-thickness:2px;text-underline-offset:3px;text-decoration-skip-ink:none}
+/* Lower than the spelling line, so a word with both kinds of problem shows both. */
+.cm-grammar{text-decoration:underline dotted #3b6fd4;text-decoration-thickness:2px;text-underline-offset:6px;text-decoration-skip-ink:none}
 .switch{display:flex;align-items:center;gap:5px;margin-left:8px;cursor:pointer;user-select:none}
 
 /* Right-click menu */
