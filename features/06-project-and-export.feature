@@ -7,11 +7,10 @@ Feature: Preserving and exporting a manuscript
   Scenario: Saving and reopening preserves the narrative hierarchy
     Given a project with a root manuscript named "Manuscript"
     And "Manuscript" contains the following content in order:
-      | kind  | title      | text   |
-      | prose |            | "Before " |
-      | scene | The Letter |        |
-      | prose |            | "After"  |
-    And "The Letter" contains the prose "She read the note."
+      | kind  | title      | text                 |
+      | prose |            | "Before "            |
+      | scene | The Letter | "She read the note." |
+      | prose |            | "After"              |
     When I save the project
     And I close the project
     And I reopen the saved project
@@ -36,11 +35,10 @@ Feature: Preserving and exporting a manuscript
   Scenario: Markdown export resolves child references recursively
     Given a project with a root manuscript named "Manuscript"
     And "Manuscript" contains the following content in order:
-      | kind  | title  | text    |
+      | kind  | title  | text      |
       | prose |        | "Before " |
-      | scene | Middle |         |
+      | scene | Middle | "inside"  |
       | prose |        | " after." |
-    And "Middle" contains the prose "inside"
     When I export the manuscript as Markdown
     Then the exported Markdown should equal "Before inside after."
     And the exported Markdown should contain no scene references or editor markers

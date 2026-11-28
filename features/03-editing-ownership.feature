@@ -7,11 +7,10 @@ Feature: Editing prose around scene boundaries
   Background:
     Given a project with a root manuscript named "Manuscript"
     And "Manuscript" contains the following content in order:
-      | kind  | title  | text    |
+      | kind  | title  | text      |
       | prose |        | "Before " |
-      | scene | Middle |         |
+      | scene | Middle | "inside"  |
       | prose |        | " after." |
-    And "Middle" contains the prose "inside"
     And I open "Manuscript" in the editor
 
   Scenario: Typing immediately before a child belongs to its parent

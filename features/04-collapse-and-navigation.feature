@@ -7,11 +7,10 @@ Feature: Navigating and collapsing scenes
   Background:
     Given a project with a root manuscript named "Manuscript"
     And "Manuscript" contains the following content in order:
-      | kind  | title   | text          |
-      | prose |         | "Introduction." |
-      | scene | A Story |               |
-      | prose |         | "Conclusion."   |
-    And "A Story" contains the prose "Once upon a time."
+      | kind  | title   | text                |
+      | prose |         | "Introduction."     |
+      | scene | A Story | "Once upon a time." |
+      | prose |         | "Conclusion."       |
     And "A Story" contains a child scene "An Aside"
     And "An Aside" contains the prose "A detail worth remembering."
     And I open "Manuscript" in the editor

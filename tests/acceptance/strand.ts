@@ -5,7 +5,7 @@
  * src/testing/hooks.ts) are only used to look: to check the outcome of a step, and for assertions.
  */
 import {expect, type Locator, type Page} from '@playwright/test';
-import {compose, type NarrativeNode, type Project, reference} from '../../src/model';
+import {compose, type NarrativeNode, node, parts, type Project, reference, subtree} from '../../src/model';
 import type {StrandHooks} from '../../src/testing/hooks';
 
 type Hooks = StrandHooks;
@@ -13,14 +13,14 @@ type HookName = {[K in keyof Hooks]: Hooks[K] extends (...args: never[]) => unkn
 
 type Point = {x: number; y: number};
 
-/** Somewhere in the editor's visible text: its first character; the stretch from the start of `from` to the end of
- *  the next `to`; or just inside a scene's opening or closing boundary mark. */
-type Spot = {first: true} | {from: string; to: string} | {scene: string; edge: 'start' | 'end'};
+/** Somewhere in the editor's visible text: its first character, or the stretch from the start of `from` to the end
+ *  of `to`. */
+type Spot = {first: true} | {from: string; to: string};
 
 /**
  * Runs in the page. Screen points for clicking just before or just after characters of the editor's visible text, or
  * why there aren't any. Each point is a quarter of the way into its character, so the nearest gap between characters
- * is the intended one.
+ * is the intended one. Text named by a step must appear exactly once.
  */
 function pointsOnScreen(spot: Spot): Point[] | string {
   const content = document.querySelector('.cm-content');
@@ -52,22 +52,42 @@ function pointsOnScreen(spot: Spot): Point[] | string {
 
   if ('first' in spot) return pieces.length ? [point(pieces[0].node, 0, 'before')] : 'The editor shows no text';
 
-  if ('from' in spot) {
-    const i = text.indexOf(spot.from), j = i < 0 ? -1 : text.indexOf(spot.to, i);
-    if (i < 0 || j < 0) return `The editor doesn’t show “${i < 0 ? spot.from : spot.to}”`;
-    const start = at(i, 'before'), end = at(j + spot.to.length - 1, 'after');
-    return start && end ? [start, end] : 'The text starts or ends with a line break';
+  for (const s of new Set([spot.from, spot.to])) {
+    const times = text.split(s).length - 1;
+    if (!times) return `“${s}” isn’t on screen: the editor doesn’t contain it, or it’s scrolled out of view`;
+    if (times > 1) return `“${s}” appears ${times} times in the editor; steps need text that appears once`;
   }
+  const i = text.indexOf(spot.from), j = text.indexOf(spot.to);
+  if (j < i) return `“${spot.to}” comes before “${spot.from}”`;
+  const start = at(i, 'before'), end = at(j + spot.to.length - 1, 'after');
+  return start && end ? [start, end] : 'The text starts or ends with a line break';
+}
 
-  const marks = content.querySelectorAll(`[data-scene="${CSS.escape(spot.scene)}"]`);
+/**
+ * Runs in the page. How to reach just inside a scene's opening (or closing) boundary mark: where to click, just
+ * before the first character after it (or after the last before it) on the same line, and how many other boundaries
+ * (say, of a scene the chapter opens with) lie between there and the mark, for the arrow keys to step back over.
+ */
+function besideBoundary({scene, edge}: {scene: string; edge: 'start' | 'end'}): {at: Point; steps: number} | string {
+  const content = document.querySelector('.cm-content');
+  const marks = content?.querySelectorAll(`[data-scene="${CSS.escape(scene)}"]`) ?? [];
   if (marks.length !== 2) return 'The scene isn’t showing its boundary marks (is it collapsed?)';
-  const mark = marks[spot.edge === 'start' ? 0 : 1], line = mark.closest('.cm-line')!;
-  const beside = pieces.filter(p => line.contains(p.node));
-  const piece = spot.edge === 'start'
-    ? beside.find(p => mark.compareDocumentPosition(p.node) & Node.DOCUMENT_POSITION_FOLLOWING)
-    : beside.findLast(p => mark.compareDocumentPosition(p.node) & Node.DOCUMENT_POSITION_PRECEDING);
-  if (!piece) return `No text ${spot.edge === 'start' ? 'follows' : 'comes before'} the scene’s boundary mark on its line`;
-  return [spot.edge === 'start' ? point(piece.node, 0, 'before') : point(piece.node, piece.node.data.length - 1, 'after')];
+  const mark = marks[edge === 'start' ? 0 : 1], line = mark.closest('.cm-line')!;
+  const follows = (a: Node, b: Node) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+  const widgets = [...line.querySelectorAll('[contenteditable="false"]')].filter(w => !w.parentElement!.closest('[contenteditable="false"]'));
+  const texts: Text[] = [];
+  const walk = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+  for (let n = walk.nextNode() as Text | null; n; n = walk.nextNode() as Text | null) {
+    if (n.data && !n.parentElement!.closest('[contenteditable="false"]')) texts.push(n);
+  }
+  const node = edge === 'start' ? texts.find(t => follows(mark, t)) : texts.findLast(t => follows(t, mark));
+  if (!node) return `There’s no text on the line to click beside the scene’s ${edge}`;
+  const steps = widgets.filter(w => w !== mark && (edge === 'start' ? follows(mark, w) && follows(w, node) : follows(node, w) && follows(w, mark))).length;
+  const range = document.createRange(), offset = edge === 'start' ? 0 : node.data.length - 1;
+  range.setStart(node, offset);
+  range.setEnd(node, offset + 1);
+  const r = range.getBoundingClientRect();
+  return {at: {x: edge === 'start' ? r.left + r.width / 4 : r.right - r.width / 4, y: r.top + r.height / 2}, steps};
 }
 
 /** Menu wording in the feature files, where it names an action rather than the app's own label. */
@@ -122,8 +142,8 @@ export class Strand {
     return n;
   }
 
-  private newChild(title: string) {
-    const child = {id: crypto.randomUUID(), title, prose: ''};
+  private newChild(title: string, prose = '') {
+    const child = {id: crypto.randomUUID(), title, prose};
     this.draft!.nodes.push(child);
     return reference(child.id);
   }
@@ -138,9 +158,10 @@ export class Strand {
     await this.reload();
   }
 
-  /** Rows of kind | title | text: prose rows hold JSON-quoted text, scene rows a new empty child's title. */
+  /** Rows of kind | title | text. Text is JSON-quoted: a prose row's text, or a scene row's prose (none if blank). */
   async setContent(title: string, rows: Record<string, string>[]) {
-    this.draftNode(title).prose = rows.map(r => r.kind === 'prose' ? JSON.parse(r.text) as string : this.newChild(r.title)).join('');
+    const text = (r: Record<string, string>) => r.text.trim() ? JSON.parse(r.text) as string : '';
+    this.draftNode(title).prose = rows.map(r => r.kind === 'prose' ? text(r) : this.newChild(r.title, text(r))).join('');
     await this.reload();
   }
 
@@ -210,9 +231,10 @@ export class Strand {
 
   /**
    * The child side of a scene's start: click just before its first word. The parent side: from there, one press of
-   * the left arrow steps back over the boundary. Likewise at the end, after the last word and right arrow. An empty
-   * scene shows its title as a placeholder, and clicking that puts the caret inside it. The opened node's own start
-   * and end are Ctrl+Home and Ctrl+End.
+   * the left arrow steps back over the boundary. Likewise at the end, after the last word and right arrow. Where other
+   * boundaries lie between the word and this one (a chapter that opens with a scene), the arrow key steps over those
+   * first, one press each. An empty scene shows its title as a placeholder, and clicking that puts the caret inside
+   * it. The opened node's own start and end are Ctrl+Home and Ctrl+End.
    */
   async caretAtNode(title: string, edge: 'start' | 'end', side: 'parent' | 'child') {
     const id = await this.id(title), where = `at the ${edge} of “${title}” on the ${side} side`;
@@ -222,9 +244,15 @@ export class Strand {
       return this.caretShouldBe(edge === 'start' ? 0 : (await this.call('text')).length, where);
     }
     const s = await this.scene(title), placeholder = this.editor.locator(`[data-scene="${id}"] .cm-empty-scene`);
+    const outward = edge === 'start' ? 'ArrowLeft' : 'ArrowRight';
     if (await placeholder.count()) await placeholder.click();
-    else await this.click((await this.points({scene: id, edge}))[0]);
-    if (side === 'parent') await this.press(edge === 'start' ? 'ArrowLeft' : 'ArrowRight');
+    else {
+      const found = await this.page.evaluate(besideBoundary, {scene: id, edge});
+      if (typeof found === 'string') throw Error(found);
+      await this.click(found.at);
+      for (let i = 0; i < found.steps; i++) await this.press(outward);
+    }
+    if (side === 'parent') await this.press(outward);
     await this.caretShouldBe(edge === 'start' ? (side === 'parent' ? s.from : s.innerFrom) : (side === 'parent' ? s.to : s.innerTo), where);
   }
 
@@ -337,6 +365,48 @@ export class Strand {
   /** A scene's title in the margin. */
   async label(title: string): Promise<Locator> {
     return this.page.locator(`.cm-scene-label[data-id="${await this.id(title)}"]`);
+  }
+
+  /**
+   * A scene's boundary as a writer sees it: its title in the margin, a tick at each end of its text, and a band in
+   * its colour starting at its first tick. Nested scenes share their top-level scene's colour, so the band has to
+   * start there, not merely be that colour. Where several scenes open at the same point, their ticks sit side by side
+   * and the bands start after the last of them, so anywhere along that run counts. An empty scene also shows its
+   * title in the text.
+   */
+  async expectVisibleBoundary(title: string) {
+    const id = await this.id(title), label = await this.label(title);
+    await expect(label, `“${title}” should have its title in the margin`).toBeVisible();
+    const ticks = this.editor.locator(`[data-scene="${id}"] .cm-boundary`);
+    await expect(ticks, `“${title}” should have a tick at each end`).toHaveCount(2);
+    for (const tick of await ticks.all()) await expect(tick).toBeVisible();
+    const placeholder = this.editor.locator(`[data-scene="${id}"] .cm-empty-scene`);
+    if (await placeholder.count()) await expect(placeholder).toBeVisible();
+
+    const marks = await this.editor.locator('[data-scene]').evaluateAll(els =>
+      els.map(e => ({id: e.getAttribute('data-scene'), box: e.getBoundingClientRect().toJSON() as DOMRect})));
+    let i = marks.findIndex(m => m.id === id);
+    const {left, top, bottom} = marks[i].box, middle = (top + bottom) / 2;
+    let right = marks[i].box.right;
+    while (marks[i + 1] && marks[i + 1].box.top === top && Math.abs(marks[i + 1].box.left - right) < 1) right = marks[++i].box.right;
+    const colour = (await label.getAttribute('class'))!.match(/\bh\d+\b/)![0];
+    const bands = await this.page.locator(`.cm-band.${colour}`).evaluateAll(els => els.map(e => e.getBoundingClientRect().toJSON() as DOMRect));
+    expect(bands.some(b => b.width > 0 && b.left > left - 1.5 && b.left < right + 1.5 && b.top <= middle && middle <= b.bottom),
+      `“${title}” should have a band in its colour starting at its first tick`).toBe(true);
+  }
+
+  /** One editable surface, holding the text of the opened node and of every scene inside it. */
+  async expectOneSurface() {
+    const surfaces = this.page.locator('[contenteditable="true"]');
+    await expect(surfaces, 'There should be exactly one editable surface').toHaveCount(1);
+    const even = (s: string) => s.replace(/\s+/g, ' ').trim();
+    const shown = even(await surfaces.innerText()), p = await this.project();
+    for (const id of subtree(p, (await this.call('openId'))!)) {
+      const n = node(p, id);
+      for (const part of parts(n.prose)) {
+        if (part.kind === 'text' && even(part.text)) expect(shown, `“${n.title}”’s text should be in it`).toContain(even(part.text));
+      }
+    }
   }
 
   /** Collapse or expand a scene with the toggle beside its margin title. */

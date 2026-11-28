@@ -50,6 +50,10 @@ When('I place the caret between {string} and {string}', ({strand}, before: strin
 
 When('I type {string}', ({strand}, text: string) => strand.type(text));
 When('I press {string}', ({strand}, key: string) => strand.press(key));
+When('I press {string} {int} times', async ({strand}, key: string, times: number) => {
+  for (let i = 0; i < times; i++) await strand.press(key);
+});
+When('I copy the selection', ({strand}) => strand.chooseFromMenu('Copy'));
 When('I paste text containing reserved editor boundary characters', async ({strand}) => {
   await strand.setFake(`f => { f.clipboard = 'smuggled' + String.fromCharCode(0xE000) + 'Evil' + String.fromCharCode(0xE002) + 'text' + String.fromCharCode(0xE001) + 'Evil' + String.fromCharCode(0xE002); }`);
   await strand.chooseFromMenu('Paste');
@@ -161,12 +165,8 @@ Then('the editor should show the assembled prose of {string} in order', async ({
   const p = await project(strand);
   expect(await visibleText(strand)).toBe(compose(p, Strand.node(p, node).id).replace(/\s+/g, ' ').trim());
 });
-Then('the editor should be a single continuous editing surface', async ({strand}) => {
-  await expect(strand.page.locator('[contenteditable="true"]')).toHaveCount(1);
-});
-Then('{string} should have a visible scene boundary', async ({strand}, node: string) => {
-  await expect(await strand.label(node)).toBeVisible();
-});
+Then('the editor should be a single continuous editing surface', ({strand}) => strand.expectOneSurface());
+Then('{string} should have a visible scene boundary', ({strand}, node: string) => strand.expectVisibleBoundary(node));
 Then('{string} should have a visible collapsed placeholder', async ({strand}, node: string) => {
   await expect(strand.page.locator(`.cm-collapsed[data-scene="${await strand.id(node)}"]`)).toBeVisible();
 });
@@ -179,6 +179,9 @@ Then('{string} should be the opened node', async ({strand}, node: string) => {
 });
 Then('the editor context menu should contain {string}', async ({strand}, label: string) => {
   await expect(strand.menuItem(label)).toBeVisible();
+});
+Then('the clipboard should contain {string}', async ({strand}, text: string) => {
+  await expect.poll(() => strand.fake(f => f.clipboard)).toBe(text);
 });
 
 // ---- Assertions: export ----

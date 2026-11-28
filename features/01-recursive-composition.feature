@@ -9,11 +9,10 @@ Feature: Recursive manuscript composition
 
   Scenario: Parent prose appears before and after an embedded scene
     Given "Manuscript" contains the following content in order:
-      | kind  | title         | text                 |
-      | prose |               | "The door was locked." |
-      | scene | The Discovery |                      |
-      | prose |               | "She turned and left." |
-    And "The Discovery" contains the prose "The key lay under the mat."
+      | kind  | title         | text                         |
+      | prose |               | "The door was locked."       |
+      | scene | The Discovery | "The key lay under the mat." |
+      | prose |               | "She turned and left."       |
     When I open "Manuscript" in the editor
     Then the editor should show the assembled prose of "Manuscript" in order
     And "The Discovery" should have a visible scene boundary
@@ -30,11 +29,9 @@ Feature: Recursive manuscript composition
 
   Scenario: Opening a scene shows only that scene and its descendants
     Given "Manuscript" contains the following content in order:
-      | kind  | title       | text |
-      | scene | Chapter One |      |
-      | scene | Chapter Two |      |
-    And "Chapter One" contains the prose "The first morning."
-    And "Chapter Two" contains the prose "The next morning."
+      | kind  | title       | text                 |
+      | scene | Chapter One | "The first morning." |
+      | scene | Chapter Two | "The next morning."  |
     When I open "Chapter One" in the editor
     Then the editor should show the prose "The first morning."
     And the editor should not show the prose "The next morning."

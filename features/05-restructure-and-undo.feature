@@ -19,11 +19,9 @@ Feature: Restructuring the manuscript
 
   Scenario: Merging adjacent siblings preserves their text order
     Given "Manuscript" contains the following content in order:
-      | kind  | title  | text |
-      | scene | First  |      |
-      | scene | Second |      |
-    And "First" contains the prose "One."
-    And "Second" contains the prose "Two."
+      | kind  | title  | text   |
+      | scene | First  | "One." |
+      | scene | Second | "Two." |
     And I open "Manuscript" in the editor
     When I merge "Second" into "First"
     Then "First" should own the prose "One.Two."
@@ -32,11 +30,10 @@ Feature: Restructuring the manuscript
 
   Scenario: Merging a child into its parent removes only the boundary
     Given "Manuscript" contains the following content in order:
-      | kind  | title  | text    |
+      | kind  | title  | text      |
       | prose |        | "Before " |
-      | scene | Middle |         |
-      | prose |        | " after" |
-    And "Middle" contains the prose "during"
+      | scene | Middle | "during"  |
+      | prose |        | " after"  |
     And I open "Manuscript" in the editor
     When I merge "Middle" into its parent
     Then "Manuscript" should own the prose "Before during after"

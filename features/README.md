@@ -27,7 +27,7 @@ Prefer these *exact phrases* when adding scenarios. Repeated steps are intended 
 - `"{node}" contains the following content in order:` followed by the standard `kind | title | text` table
 - `"{node}" is collapsed`
 
-The **content-in-order table** uses `prose` rows for text and `scene` rows for child references. Prose cells contain **JSON-quoted strings**, including spaces that must be preserved (`"Before "`, `" after."`). A `scene` row identifies a new, initially empty child by title. Fixture steps that add prose to a node containing children append it after existing content unless using the ordered table. A given node title uniquely identifies a node within a scenario.
+The **content-in-order table** uses `prose` rows for text and `scene` rows for child references. Text cells contain **JSON-quoted strings**, including spaces that must be preserved (`"Before "`, `" after."`). A `scene` row adds a new child by title, with its text cell as the child's prose (blank for an empty scene). Fixture steps that add prose to a node containing children append it after existing content unless using the ordered table. A given node title uniquely identifies a node within a scenario.
 
 ### User actions
 
