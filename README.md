@@ -4,31 +4,33 @@ A desktop writing tool for fiction, built around scenes that nest inside each ot
 
 ## Setup (Windows)
 
-Needs: Node.js 22.12+, Rust (MSVC), Visual Studio 2022 Build Tools (C++ workload), WebView2 Runtime, Microsoft Edge (for acceptance tests).
+Needs: Node.js 22.12+, pnpm, Rust (MSVC), Visual Studio 2022 Build Tools (C++ workload), WebView2 Runtime, Microsoft Edge (for acceptance tests).
 
-    npm install
-    npm run tauri dev
+    pnpm install
+    pnpm tauri dev
 
 The first build takes a few minutes (Harper, the grammar checker, is compiled optimised).
+
+pnpm only lets packages run install scripts if `pnpm-workspace.yaml` allows them. esbuild's is deliberately not allowed; Strand works without it.
 
 ## Running and building
 
 | Command | Does |
 |---|---|
-| `npm run tauri dev` | Run the app |
-| `npm run tauri build` | Build the desktop executable |
-| `npm run build` | Type-check and build the frontend only |
+| `pnpm tauri dev` | Run the app |
+| `pnpm tauri build` | Build the desktop executable |
+| `pnpm build` | Type-check and build the frontend only |
 
 ## Tests
 
 | Tests | What they check | Command |
 |---|---|---|
-| Unit | The TypeScript logic: model, editor markers and structural commands, edit guard, saving and autosave. Fast; no browser. | `npm run test:unit` |
-| Acceptance | The scenarios in `features/`, run through the real UI in headless Edge, with the Rust side faked. | `npm run test:acceptance` |
-| Rust | Project file saving and loading, Windows spell checker, Harper grammar. | `npm run test:rust` |
-| All | All three, in that order. | `npm test` |
+| Unit | The TypeScript logic: model, editor markers and structural commands, edit guard, saving and autosave. Fast; no browser. | `pnpm test:unit` |
+| Acceptance | The scenarios in `features/`, run through the real UI in headless Edge, with the Rust side faked. | `pnpm test:acceptance` |
+| Rust | Project file saving and loading, Windows spell checker, Harper grammar. | `pnpm test:rust` |
+| All | All three, in that order. | `pnpm test` |
 
-Coverage report for the unit tests: `npm run test:unit -- --coverage`.
+Coverage report for the unit tests: `pnpm test:unit --coverage`.
 
 ## Code layout
 

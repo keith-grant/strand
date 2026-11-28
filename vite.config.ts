@@ -11,7 +11,7 @@ export default defineConfig({
     // on Windows, and changes there are Tauri's job to pick up anyway.
     watch: {ignored: ['**/src-tauri/**']},
   },
-  // Unit tests (`npm test`): plain Node, no browser. Acceptance tests run separately through Playwright.
+  // Unit tests (`pnpm test:unit`): plain Node, no browser. Acceptance tests run separately through Playwright.
   test: {
     include: ['src/**/*.test.ts'],
     environment: 'node',

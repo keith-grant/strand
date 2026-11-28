@@ -1,0 +1,4 @@
+# Packages may not run install scripts unless listed here as true.
+# esbuild's script only checks/sets up its own binary, which pnpm installs anyway; Strand works without it.
+allowBuilds:
+  esbuild: false

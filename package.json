@@ -3,11 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@12.23.0",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
     "tauri": "tauri",
-    "test": "npm run test:unit && npm run test:acceptance && npm run test:rust",
+    "test": "pnpm test:unit && pnpm test:acceptance && pnpm test:rust",
     "test:unit": "vitest run",
     "test:acceptance": "bddgen && playwright test",
     "test:rust": "cd src-tauri && cargo test"
