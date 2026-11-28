@@ -1,6 +1,6 @@
 /*
  * Step definitions for features/*.feature, following the step vocabulary in features/README.md.
- * Fixture steps build the project directly; actions go through the UI; assertions read the live model.
+ * Fixture steps build the project directly; actions are mouse and keyboard input; assertions read the live model.
  */
 import {expect} from '@playwright/test';
 import {createBdd, type DataTable} from 'playwright-bdd';
@@ -40,14 +40,8 @@ Given('{string} is collapsed', ({strand}, node: string) => strand.toggle(node));
 When('I open {string} in the editor', ({strand}, node: string) => strand.openNode(node));
 When('I select the text {string}', ({strand}, text: string) => strand.selectText(text));
 When('I select from the text {string} to the text {string}', ({strand}, start: string, end: string) => strand.selectBetween(start, end));
-When('I select all prose in the editor', async ({strand}) => {
-  await strand.placeCaret(0);
-  await strand.press('Control+a');
-  strand.remembered.set('selection', 0);
-});
-When('I clear the selection', async ({strand}) => {
-  await strand.placeCaret((await strand.call('selection')).from);
-});
+When('I select all prose in the editor', ({strand}) => strand.selectAll());
+When('I clear the selection', ({strand}) => strand.clearSelection());
 When(/^I place the caret at the (start|end) of "(.+)" on the (parent|child) side$/, ({strand}, edge: string, node: string, side: string) =>
   strand.caretAtNode(node, edge as 'start' | 'end', side as 'parent' | 'child'));
 When('I place the caret between {string} and {string}', ({strand}, before: string, after: string) => strand.caretBetween(before, after));

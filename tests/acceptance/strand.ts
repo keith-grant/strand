@@ -1,7 +1,8 @@
 /*
- * Drives the app for the acceptance tests. Fixture steps build a project here and load it into the app; actions go
- * through the real UI (keyboard, right-click menu, margin titles, tree); assertions read the live model through the
- * app's test hooks (window.__strand, see src/testing/hooks.ts).
+ * Drives the app for the acceptance tests. Fixture steps build a project here and load it into the app. Actions are
+ * real mouse and keyboard input: clicks and drags at points found on screen from the editor's visible text and scene
+ * boundary marks, key presses, menus, margin titles and the tree. The app's test hooks (window.__strand, see
+ * src/testing/hooks.ts) are only used to look: to check the outcome of a step, and for assertions.
  */
 import {expect, type Locator, type Page} from '@playwright/test';
 import {compose, type NarrativeNode, type Project, reference} from '../../src/model';
@@ -9,6 +10,65 @@ import type {StrandHooks} from '../../src/testing/hooks';
 
 type Hooks = StrandHooks;
 type HookName = {[K in keyof Hooks]: Hooks[K] extends (...args: never[]) => unknown ? K : never}[keyof Hooks];
+
+type Point = {x: number; y: number};
+
+/** Somewhere in the editor's visible text: its first character; the stretch from the start of `from` to the end of
+ *  the next `to`; or just inside a scene's opening or closing boundary mark. */
+type Spot = {first: true} | {from: string; to: string} | {scene: string; edge: 'start' | 'end'};
+
+/**
+ * Runs in the page. Screen points for clicking just before or just after characters of the editor's visible text, or
+ * why there aren't any. Each point is a quarter of the way into its character, so the nearest gap between characters
+ * is the intended one.
+ */
+function pointsOnScreen(spot: Spot): Point[] | string {
+  const content = document.querySelector('.cm-content');
+  if (!content) return 'There’s no editor';
+  // The visible text, line by line, and the text nodes it's in. Widgets (boundary marks, collapsed scenes,
+  // placeholders) aren't part of it.
+  const pieces: {node: Text; start: number}[] = [];
+  let text = '';
+  content.querySelectorAll('.cm-line').forEach((line, i) => {
+    if (i) text += '\n';
+    const walk = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+    for (let n = walk.nextNode() as Text | null; n; n = walk.nextNode() as Text | null) {
+      if (!n.data || n.parentElement!.closest('[contenteditable="false"]')) continue;
+      pieces.push({node: n, start: text.length});
+      text += n.data;
+    }
+  });
+  const point = (node: Text, offset: number, side: 'before' | 'after') => {
+    const range = document.createRange();
+    range.setStart(node, offset);
+    range.setEnd(node, offset + 1);
+    const r = range.getBoundingClientRect();
+    return {x: side === 'before' ? r.left + r.width / 4 : r.right - r.width / 4, y: r.top + r.height / 2};
+  };
+  const at = (i: number, side: 'before' | 'after') => {
+    const p = pieces.find(p => p.start <= i && i < p.start + p.node.data.length);
+    return p && point(p.node, i - p.start, side);
+  };
+
+  if ('first' in spot) return pieces.length ? [point(pieces[0].node, 0, 'before')] : 'The editor shows no text';
+
+  if ('from' in spot) {
+    const i = text.indexOf(spot.from), j = i < 0 ? -1 : text.indexOf(spot.to, i);
+    if (i < 0 || j < 0) return `The editor doesn’t show “${i < 0 ? spot.from : spot.to}”`;
+    const start = at(i, 'before'), end = at(j + spot.to.length - 1, 'after');
+    return start && end ? [start, end] : 'The text starts or ends with a line break';
+  }
+
+  const marks = content.querySelectorAll(`[data-scene="${CSS.escape(spot.scene)}"]`);
+  if (marks.length !== 2) return 'The scene isn’t showing its boundary marks (is it collapsed?)';
+  const mark = marks[spot.edge === 'start' ? 0 : 1], line = mark.closest('.cm-line')!;
+  const beside = pieces.filter(p => line.contains(p.node));
+  const piece = spot.edge === 'start'
+    ? beside.find(p => mark.compareDocumentPosition(p.node) & Node.DOCUMENT_POSITION_FOLLOWING)
+    : beside.findLast(p => mark.compareDocumentPosition(p.node) & Node.DOCUMENT_POSITION_PRECEDING);
+  if (!piece) return `No text ${spot.edge === 'start' ? 'follows' : 'comes before'} the scene’s boundary mark on its line`;
+  return [spot.edge === 'start' ? point(piece.node, 0, 'before') : point(piece.node, piece.node.data.length - 1, 'after')];
+}
 
 /** Menu wording in the feature files, where it names an action rather than the app's own label. */
 const MENU_LABELS: Record<string, string> = {
@@ -121,50 +181,91 @@ export class Strand {
     return scene;
   }
 
-  // ---- Editor positions (set-up; allowed to bypass the UI) ----
+  // ---- Placing the caret and selecting, with the mouse and keyboard ----
+  // Each of these checks afterwards that the caret or selection landed where the step meant, so a click that lands
+  // in the wrong place fails here, clearly, rather than as a puzzling assertion later.
 
-  private async textPosition(text: string, end = false) {
-    const doc = await this.call('text'), i = doc.indexOf(text);
-    if (i < 0) throw Error(`The editor doesn’t contain “${text}”`);
-    return end ? i + text.length : i;
+  get editor(): Locator { return this.page.locator('.cm-content'); }
+
+  private async points(spot: Spot): Promise<Point[]> {
+    const found = await this.page.evaluate(pointsOnScreen, spot);
+    if (typeof found === 'string') throw Error(found);
+    return found;
   }
 
-  async select(from: number, to: number) {
-    await this.call('select', from, to);
-    this.remembered.set('selection', await this.call('composedOffset', from));
+  private async click(at: Point) { await this.page.mouse.click(at.x, at.y); }
+
+  /** Click into the text, so the editor has the keyboard. */
+  private async clickIntoText() { await this.click((await this.points({first: true}))[0]); }
+
+  /** Let the editor redraw its cursor and selection, which it does on the next animation frame. */
+  private async nextFrame() {
+    await this.page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
   }
 
-  async selectText(text: string) {
-    const from = await this.textPosition(text);
-    await this.select(from, from + text.length);
-  }
-
-  async selectBetween(start: string, end: string) {
-    await this.select(await this.textPosition(start), await this.textPosition(end, true));
-  }
-
-  async placeCaret(pos: number) {
-    await this.call('select', pos);
+  private async caretShouldBe(pos: number, where: string) {
+    expect(await this.call('selection'), `The caret should be ${where}`).toEqual({from: pos, to: pos});
     this.remembered.set('caret', await this.call('composedOffset', pos));
   }
 
+  /**
+   * The child side of a scene's start: click just before its first word. The parent side: from there, one press of
+   * the left arrow steps back over the boundary. Likewise at the end, after the last word and right arrow. An empty
+   * scene shows its title as a placeholder, and clicking that puts the caret inside it. The opened node's own start
+   * and end are Ctrl+Home and Ctrl+End.
+   */
   async caretAtNode(title: string, edge: 'start' | 'end', side: 'parent' | 'child') {
-    if (await this.id(title) === await this.call('openId')) {
-      return this.placeCaret(edge === 'start' ? 0 : (await this.call('text')).length);
+    const id = await this.id(title), where = `at the ${edge} of “${title}” on the ${side} side`;
+    if (id === await this.call('openId')) {
+      await this.clickIntoText();
+      await this.press(edge === 'start' ? 'Control+Home' : 'Control+End');
+      return this.caretShouldBe(edge === 'start' ? 0 : (await this.call('text')).length, where);
     }
-    const s = await this.scene(title);
-    await this.placeCaret(edge === 'start' ? (side === 'parent' ? s.from : s.innerFrom) : (side === 'parent' ? s.to : s.innerTo));
+    const s = await this.scene(title), placeholder = this.editor.locator(`[data-scene="${id}"] .cm-empty-scene`);
+    if (await placeholder.count()) await placeholder.click();
+    else await this.click((await this.points({scene: id, edge}))[0]);
+    if (side === 'parent') await this.press(edge === 'start' ? 'ArrowLeft' : 'ArrowRight');
+    await this.caretShouldBe(edge === 'start' ? (side === 'parent' ? s.from : s.innerFrom) : (side === 'parent' ? s.to : s.innerTo), where);
   }
 
+  /** Click just after the last character of `before`. */
   async caretBetween(before: string, after: string) {
-    const pos = await this.textPosition(before, true), doc = await this.call('text');
+    await this.click((await this.points({from: before, to: before}))[1]);
+    const doc = await this.call('text'), pos = doc.indexOf(before) + before.length;
     if (!doc.slice(pos).trimStart().startsWith(after.trimStart())) throw Error(`“${after}” doesn’t follow “${before}”`);
-    await this.placeCaret(pos);
+    await this.caretShouldBe(pos, `between “${before}” and “${after}”`);
   }
 
-  // ---- Actions through the UI ----
+  /** Drag from just before the first character of `start` to just after the last character of `end`. */
+  async selectBetween(start: string, end: string) {
+    const [from, to] = await this.points({from: start, to: end});
+    await this.page.mouse.move(from.x, from.y);
+    await this.page.mouse.down();
+    await this.page.mouse.move(to.x, to.y, {steps: 5});
+    await this.page.mouse.up();
+    const doc = await this.call('text'), a = doc.indexOf(start), b = doc.indexOf(end, a) + end.length;
+    expect(await this.call('selection'), `The selection should run from “${start}” to “${end}”`).toEqual({from: a, to: b});
+    this.remembered.set('selection', await this.call('composedOffset', a));
+  }
 
-  get editor(): Locator { return this.page.locator('.cm-content'); }
+  selectText(text: string) { return this.selectBetween(text, text); }
+
+  async selectAll() {
+    await this.clickIntoText();
+    await this.press('Control+a');
+    expect(await this.call('selection'), 'Everything should be selected').toEqual({from: 0, to: (await this.call('text')).length});
+    this.remembered.set('selection', 0);
+  }
+
+  /** Close the right-click menu if it's open, then press the left arrow. */
+  async clearSelection() {
+    if (await this.menu.count()) await this.press('Escape');
+    await this.press('ArrowLeft');
+    const {from, to} = await this.call('selection');
+    expect(to, 'The selection should be cleared').toBe(from);
+  }
+
+  // ---- Other actions through the UI ----
 
   treeRow(title: string): Locator {
     return this.page.locator('aside .tree-node').filter({has: this.page.locator('.name').getByText(title, {exact: true})});
@@ -197,18 +298,21 @@ export class Strand {
     await this.name();
   }
 
-  /** Right-click at the cursor, or inside the selection. */
+  get menu(): Locator { return this.page.locator('.popup-menu'); }
+
+  /** Right-click on the selection, or on the cursor. */
   async openMenu() {
-    if (await this.page.locator('.popup-menu').count()) await this.press('Escape');
-    const {from, to} = await this.call('selection');
-    const at = await this.call('coords', to > from ? from + 1 : from);
-    if (!at) throw Error('The cursor isn’t on screen');
-    await this.page.mouse.click(at.x, at.y, {button: 'right'});
-    await expect(this.page.locator('.popup-menu')).toBeVisible();
+    await this.nextFrame();
+    const selection = this.page.locator('.cm-selectionBackground');
+    const target = await selection.count() ? selection.first() : this.page.locator('.cm-cursor-primary');
+    const box = await target.boundingBox();
+    if (!box) throw Error('Neither the cursor nor a selection is showing');
+    await this.page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, {button: 'right'});
+    await expect(this.menu).toBeVisible();
   }
 
   menuItem(label: string): Locator {
-    return this.page.locator('.popup-menu').getByRole('menuitem', {name: MENU_LABELS[label] ?? label, exact: true});
+    return this.menu.getByRole('menuitem', {name: MENU_LABELS[label] ?? label, exact: true});
   }
 
   async chooseFromMenu(label: string) {

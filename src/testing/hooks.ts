@@ -1,6 +1,6 @@
 /*
- * Test mode only: a read-only window into the running app for the acceptance tests (window.__strand), plus the
- * set-up actions the feature files allow to bypass the UI (loading a fixture project, placing the cursor).
+ * Test mode only: a read-only window into the running app for the acceptance tests (window.__strand), plus loading
+ * a fixture project, the one set-up step the feature files allow to bypass the UI.
  */
 import type {App} from '../app';
 import {stripMarkers} from '../editor/markers';
@@ -9,7 +9,7 @@ import type {Project} from '../model';
 import {fake} from './fake-tauri';
 
 function makeHooks(app: App) {
-  const {session, editor} = app, view = editor.view;
+  const {session} = app, view = app.editor.view;
   return {
     fake,
     /** Start afresh with this project, as if opened from `path` (stored there first), or new if path is null. */
@@ -31,18 +31,9 @@ function makeHooks(app: App) {
       const s = sceneById(view.state, id);
       return s ? {from: s.from, innerFrom: s.innerFrom, innerTo: s.innerTo, to: s.to} : null;
     },
-    select(anchor: number, head = anchor) {
-      view.dispatch({selection: {anchor, head}});
-      editor.focus();
-    },
     selection: () => ({from: view.state.selection.main.from, to: view.state.selection.main.to}),
     /** Where an editor position falls in the composed manuscript (the text without scene markers). */
     composedOffset: (pos: number) => stripMarkers(view.state.sliceDoc(0, pos)).length,
-    /** Screen coordinates of an editor position, for right-clicking there. */
-    coords(pos: number) {
-      const c = view.coordsAtPos(pos);
-      return c ? {x: c.left + 1, y: (c.top + c.bottom) / 2} : null;
-    },
   };
 }
 
